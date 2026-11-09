@@ -35,6 +35,7 @@ struct Ui {
     speed_value: gtk::Label,
     custom: gtk::Entry,
     speed_hint: gtk::Label,
+    history: gtk::Button,
     notice: gtk::Label,
     autostart: gtk::Switch,
     auto_update: gtk::Switch,
@@ -97,6 +98,7 @@ fn apply(ui: &Ui, v: &View) {
     ui.record.set_label(if v.capturing == Some(Which::Record) { waiting } else { &v.record });
     ui.play.set_label(if v.capturing == Some(Which::Play) { waiting } else { &v.play });
     ui.repeat.set_label(if v.capturing == Some(Which::Loop) { waiting } else { &v.repeat });
+    ui.history.set_label(if v.capturing == Some(Which::History) { waiting } else { &v.history });
 
     let step = v.speed_step.min(speed::CUSTOM);
     if ui.speed.value().round() as usize != step {
@@ -220,9 +222,11 @@ fn build() -> Ui {
     let record = gtk::Button::with_label("");
     let play = gtk::Button::with_label("");
     let repeat = gtk::Button::with_label("");
+    let history = gtk::Button::with_label("");
     section.pack_start(&row("Record / stop recording", &record), false, false, 0);
     section.pack_start(&row("Play once / stop playback", &play), false, false, 0);
     section.pack_start(&row("Loop / stop loop", &repeat), false, false, 0);
+    section.pack_start(&row("Open recordings", &history), false, false, 0);
     // The speed shortcuts are fixed, so they are listed as text.
     let keys: Vec<String> = app::view().map(|v| v.speed_keys).unwrap_or_default();
     let first = keys.first().cloned().unwrap_or_default();
@@ -277,7 +281,7 @@ fn build() -> Ui {
         commit(e);
         Propagation::Proceed
     });
-    for (button, which) in [(&record, Which::Record), (&play, Which::Play), (&repeat, Which::Loop)] {
+    for (button, which) in [(&record, Which::Record), (&play, Which::Play), (&repeat, Which::Loop), (&history, Which::History)] {
         button.connect_clicked(move |b| {
             app::begin_capture(which);
             if let Some(w) = b.toplevel().and_then(|t| t.downcast::<gtk::Window>().ok()) {
@@ -361,6 +365,7 @@ fn build() -> Ui {
         record,
         play,
         repeat,
+        history,
         speed: slider,
         speed_value,
         custom,

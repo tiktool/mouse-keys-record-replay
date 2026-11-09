@@ -36,15 +36,15 @@ use crate::speed;
 
 /// Client size in logical pixels (96 dpi).
 const W: i32 = 460;
-const H: i32 = 834;
+const H: i32 = 880;
 const PAD: i32 = 20;
 const CARD_W: i32 = W - 2 * PAD;
 const PIXEL_FORMAT_32BPP_ARGB: i32 = 0x0026_200A;
 
 pub(super) const ACCENT: u32 = 0x0A84FF;
 pub(super) const RED: u32 = 0xFF3B30;
-const GOLD: u32 = 0xF5B400;
-const WHITE: u32 = 0xFFFFFF;
+pub(super) const GOLD: u32 = 0xF5B400;
+pub(super) const WHITE: u32 = 0xFFFFFF;
 
 struct Palette {
     bg: u32,
@@ -92,7 +92,7 @@ const LIGHT: Palette = Palette {
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Hit {
+pub(super) enum Hit {
     Record,
     Play,
     Loop,
@@ -115,7 +115,7 @@ impl Hit {
 }
 
 #[derive(Clone, Copy)]
-enum Font {
+pub(super) enum Font {
     Title,
     Strong,
     Body,
@@ -124,10 +124,10 @@ enum Font {
     Caption,
 }
 
-struct Fonts([HFONT; 6]);
+pub(super) struct Fonts([HFONT; 6]);
 
 impl Fonts {
-    fn new(dpi: u32) -> Self {
+    pub(super) fn new(dpi: u32) -> Self {
         let spec = [(18, 600), (14, 600), (14, 400), (13, 400), (12, 400), (12, 600)];
         let face = wide("Segoe UI");
         Fonts(spec.map(|(px, weight)| unsafe {
@@ -150,7 +150,7 @@ impl Fonts {
         }))
     }
 
-    fn get(&self, f: Font) -> HFONT {
+    pub(super) fn get(&self, f: Font) -> HFONT {
         self.0[f as usize]
     }
 }
@@ -203,7 +203,7 @@ pub(super) fn argb(c: u32) -> u32 {
 }
 
 /// Mixes `c` toward white by `t` (0..1).
-fn lighten(c: u32, t: f32) -> u32 {
+pub(super) fn lighten(c: u32, t: f32) -> u32 {
     let ch = |s: u32| {
         let v = ((c >> s) & 0xFF) as f32;
         ((v + (255.0 - v) * t).round() as u32) << s
@@ -370,7 +370,7 @@ pub fn close() {
 // Drawing
 
 /// One text run, queued while GDI+ owns the device context and drawn after.
-struct Text {
+pub(super) struct Text {
     rect: RECT,
     s: Vec<u16>,
     font: Font,
@@ -378,26 +378,61 @@ struct Text {
     flags: u32,
 }
 
-struct Canvas<'a> {
-    g: *mut GpGraphics,
-    k: f32,
-    hdc: HDC,
-    fonts: &'a Fonts,
-    texts: Vec<Text>,
-    hits: Vec<(RECT, Hit)>,
+/// Draws one frame into `hdc`: shapes through GDI+ between `begin` and
+/// `end`, then the queued text through GDI. `H` is what a click area means.
+pub(super) struct Canvas<'a, H = Hit> {
+    pub(super) g: *mut GpGraphics,
+    pub(super) k: f32,
+    pub(super) hdc: HDC,
+    pub(super) fonts: &'a Fonts,
+    pub(super) texts: Vec<Text>,
+    pub(super) hits: Vec<(RECT, H)>,
 }
 
-impl Canvas<'_> {
-    fn px(&self, v: i32) -> i32 {
+impl<H> Canvas<'_, H> {
+    pub(super) fn begin(&mut self) {
+        unsafe {
+            GdipCreateFromHDC(self.hdc, &mut self.g);
+            GdipSetSmoothingMode(self.g, SmoothingModeAntiAlias);
+            GdipSetPixelOffsetMode(self.g, PixelOffsetModeHalf);
+            GdipSetInterpolationMode(self.g, InterpolationModeHighQualityBicubic);
+        }
+    }
+
+    pub(super) fn end(&mut self) {
+        let hdc = self.hdc;
+        unsafe {
+            GdipDeleteGraphics(self.g);
+            SetBkMode(hdc, TRANSPARENT as i32);
+        }
+        // Two-line runs need explicit centring because DT_VCENTER only applies to single lines.
+        for t in &self.texts {
+            let mut r = t.rect;
+            unsafe {
+                let old = SelectObject(hdc, self.fonts.get(t.font));
+                if t.flags & DT_WORDBREAK != 0 && t.flags & DT_VCENTER != 0 {
+                    let mut m = r;
+                    DrawTextW(hdc, t.s.as_ptr(), -1, &mut m, t.flags | DT_CALCRECT);
+                    let off = ((r.bottom - r.top) - (m.bottom - m.top)) / 2;
+                    r.top += off.max(0);
+                }
+                SetTextColor(hdc, colorref(t.color));
+                DrawTextW(hdc, t.s.as_ptr(), -1, &mut r, t.flags);
+                SelectObject(hdc, old);
+            }
+        }
+    }
+
+    pub(super) fn px(&self, v: i32) -> i32 {
         (v as f32 * self.k).round() as i32
     }
 
-    fn rect(&self, x: i32, y: i32, w: i32, h: i32) -> RECT {
+    pub(super) fn rect(&self, x: i32, y: i32, w: i32, h: i32) -> RECT {
         RECT { left: self.px(x), top: self.px(y), right: self.px(x + w), bottom: self.px(y + h) }
     }
 
     /// Text width in logical pixels. Called before GDI+ takes the DC.
-    fn measure(&self, font: Font, s: &str) -> i32 {
+    pub(super) fn measure(&self, font: Font, s: &str) -> i32 {
         let w = wide(s);
         let mut r = RECT { left: 0, top: 0, right: 10_000, bottom: 1000 };
         unsafe {
@@ -408,12 +443,12 @@ impl Canvas<'_> {
         (r.right as f32 / self.k).ceil() as i32
     }
 
-    fn text(&mut self, x: i32, y: i32, w: i32, h: i32, s: &str, font: Font, color: u32, flags: u32) {
+    pub(super) fn text(&mut self, x: i32, y: i32, w: i32, h: i32, s: &str, font: Font, color: u32, flags: u32) {
         let rect = self.rect(x, y, w, h);
         self.texts.push(Text { rect, s: wide(s), font, color, flags: flags | DT_NOPREFIX });
     }
 
-    fn hit(&mut self, x: i32, y: i32, w: i32, h: i32, hit: Hit) {
+    pub(super) fn hit(&mut self, x: i32, y: i32, w: i32, h: i32, hit: H) {
         let r = self.rect(x, y, w, h);
         self.hits.push((r, hit));
     }
@@ -451,7 +486,7 @@ impl Canvas<'_> {
         }
     }
 
-    fn round_rect(&self, x: i32, y: i32, w: i32, h: i32, r: f32, fill: u32, border: Option<(u32, f32)>) {
+    pub(super) fn round_rect(&self, x: i32, y: i32, w: i32, h: i32, r: f32, fill: u32, border: Option<(u32, f32)>) {
         if r <= 0.0 {
             // A zero radius gives empty arcs, which GDI+ fills as nothing.
             let k = self.k;
@@ -474,7 +509,7 @@ impl Canvas<'_> {
         }
     }
 
-    fn circle(&self, cx: f32, cy: f32, r: f32, color: u32) {
+    pub(super) fn circle(&self, cx: f32, cy: f32, r: f32, color: u32) {
         unsafe {
             let mut brush: *mut GpSolidFill = null_mut();
             GdipCreateSolidFill(argb(color), &mut brush);
@@ -484,7 +519,7 @@ impl Canvas<'_> {
         }
     }
 
-    fn star(&self, cx: f32, cy: f32, r: f32, color: u32) {
+    pub(super) fn star(&self, cx: f32, cy: f32, r: f32, color: u32) {
         let pts: Vec<PointF> = (0..10)
             .map(|i| {
                 let a = std::f32::consts::PI * (i as f32 / 5.0 - 0.5);
@@ -500,7 +535,7 @@ impl Canvas<'_> {
         }
     }
 
-    fn image(&self, x: i32, y: i32, size: i32, bgra: &[u8]) {
+    pub(super) fn image(&self, x: i32, y: i32, size: i32, bgra: &[u8]) {
         let s = self.px(size);
         unsafe {
             let mut bmp: *mut GpBitmap = null_mut();
@@ -509,6 +544,17 @@ impl Canvas<'_> {
                 GdipDrawImageRectI(self.g, bmp as *mut GpImage, self.px(x), self.px(y), s, s);
                 GdipDisposeImage(bmp as *mut GpImage);
             }
+        }
+    }
+
+    /// Fills the outline through `pts`, given in logical pixels.
+    pub(super) fn polygon(&self, pts: &[(f32, f32)], color: u32) {
+        let pts: Vec<PointF> = pts.iter().map(|&(x, y)| PointF { X: x * self.k, Y: y * self.k }).collect();
+        unsafe {
+            let mut brush: *mut GpSolidFill = null_mut();
+            GdipCreateSolidFill(argb(color), &mut brush);
+            GdipFillPolygon(self.g, brush as *mut GpBrush, pts.as_ptr(), pts.len() as i32, FillModeAlternate);
+            GdipDeleteBrush(brush as *mut GpBrush);
         }
     }
 }
@@ -569,10 +615,11 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
                     Which::Record => v.record.clone(),
                     Which::Play => v.play.clone(),
                     Which::Loop => v.repeat.clone(),
+                    Which::History => v.history.clone(),
                 }
             }
         };
-        let chip_w = [Which::Record, Which::Play, Which::Loop].map(|w| (c.measure(Font::Strong, &chip_label(w)) + 28).max(120));
+        let chip_w = [Which::Record, Which::Play, Which::Loop, Which::History].map(|w| (c.measure(Font::Strong, &chip_label(w)) + 28).max(120));
         let speed_chip = match (v.speed_keys.first(), v.speed_keys.last()) {
             (Some(a), Some(b)) => format!("{a} to {}", b.rsplit(' ').next().unwrap_or(b)),
             _ => String::new(),
@@ -581,12 +628,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         let speed_label_w = speed::LABELS.map(|l| c.measure(Font::Small, l));
         let edit = state.edit.clone();
 
-        unsafe {
-            GdipCreateFromHDC(hdc, &mut c.g);
-            GdipSetSmoothingMode(c.g, SmoothingModeAntiAlias);
-            GdipSetPixelOffsetMode(c.g, PixelOffsetModeHalf);
-            GdipSetInterpolationMode(c.g, InterpolationModeHighQualityBicubic);
-        }
+        c.begin();
         let full = (cw as f32 / k).ceil() as i32 + 1;
         let full_h = (ch as f32 / k).ceil() as i32 + 1;
         c.round_rect(0, 0, full, full_h, 0.0, p.bg, None);
@@ -631,18 +673,24 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         c.hit(W - PAD - 8 - reset_w, y - 4, reset_w + 8, 24, Hit::Reset);
         let y = 228 + SPEED_ROW;
         let row = 46;
-        card(&c, y, row * 4, p);
+        card(&c, y, row * 5, p);
         divider(&c, y + row, p);
         divider(&c, y + row * 2, p);
         divider(&c, y + row * 3, p);
+        divider(&c, y + row * 4, p);
         // The speed shortcuts are fixed, so their chip is read-only.
-        let ry = y + row * 3;
+        let ry = y + row * 4;
         c.text(PAD + 16, ry, 200, row, "Change speed", Font::Body, p.text, DT_SINGLELINE | DT_VCENTER);
         let cx = W - PAD - 12 - speed_chip_w;
         let cy = ry + (row - 30) / 2;
         c.round_rect(cx, cy, speed_chip_w, 30, 6.0, p.chip, Some((p.border, 1.0)));
         c.text(cx, cy, speed_chip_w, 30, &speed_chip, Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
-        let rows = [(Which::Record, "Record and stop"), (Which::Play, "Play once"), (Which::Loop, "Loop until stopped")];
+        let rows = [
+            (Which::Record, "Record and stop"),
+            (Which::Play, "Play once"),
+            (Which::Loop, "Loop until stopped"),
+            (Which::History, "Open recordings"),
+        ];
         for (i, (w, label)) in rows.into_iter().enumerate() {
             let ry = y + row * i as i32;
             c.text(PAD + 16, ry, 200, row, label, Font::Body, p.text, DT_SINGLELINE | DT_VCENTER);
@@ -662,7 +710,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         }
 
         // Notice
-        let y = 370 + SPEED_ROW + 46;
+        let y = 370 + SPEED_ROW + 92;
         let (text, color) = match (&v.notice, v.capturing) {
             (_, Some(_)) => ("Press the new shortcut, or Esc to cancel.".to_string(), ACCENT),
             (Some(n), None) => (
@@ -677,9 +725,9 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         c.text(PAD + 4, y, CARD_W - 8, 34, &text, Font::Small, color, DT_WORDBREAK | DT_END_ELLIPSIS);
 
         // General
-        let y = 408 + SPEED_ROW + 46;
+        let y = 408 + SPEED_ROW + 92;
         c.text(PAD + 4, y, 200, 16, "General", Font::Caption, p.sub, DT_SINGLELINE | DT_VCENTER);
-        let y = 428 + SPEED_ROW + 46;
+        let y = 428 + SPEED_ROW + 92;
         let row = 50;
         card(&c, y, row * 4, p);
         divider(&c, y + row, p);
@@ -703,7 +751,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         button(&mut c, W - PAD - 12 - bw, y + row * 3 + (row - 30) / 2, bw, 30, "Check now", Look::Secondary, hover == Some(Hit::Check), Hit::Check, p);
 
         // Star
-        let y = 640 + SPEED_ROW + 46;
+        let y = 640 + SPEED_ROW + 92;
         let sh = 52;
         card(&c, y, sh, p);
         let bw = 150;
@@ -716,26 +764,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         c.text(bx + 34, byy, bw - 42, 30, "Star on GitHub", Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER);
         c.hit(bx, byy, bw, 30, Hit::Star);
 
-        unsafe {
-            GdipDeleteGraphics(c.g);
-            SetBkMode(hdc, TRANSPARENT as i32);
-        }
-        // Two-line runs need explicit centring because DT_VCENTER only applies to single lines.
-        for t in &c.texts {
-            let mut r = t.rect;
-            unsafe {
-                let old = SelectObject(hdc, c.fonts.get(t.font));
-                if t.flags & DT_WORDBREAK != 0 && t.flags & DT_VCENTER != 0 {
-                    let mut m = r;
-                    DrawTextW(hdc, t.s.as_ptr(), -1, &mut m, t.flags | DT_CALCRECT);
-                    let off = ((r.bottom - r.top) - (m.bottom - m.top)) / 2;
-                    r.top += off.max(0);
-                }
-                SetTextColor(hdc, colorref(t.color));
-                DrawTextW(hdc, t.s.as_ptr(), -1, &mut r, t.flags);
-                SelectObject(hdc, old);
-            }
-        }
+        c.end();
         state_hits = std::mem::take(&mut c.hits);
     }
     state.hits = state_hits;

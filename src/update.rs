@@ -151,9 +151,9 @@ fn check_and_install() -> Result<Option<String>, String> {
     if !is_newer(&r.version, VERSION) {
         return Ok(None);
     }
-    let dir = config::dir().join("update");
+    let dir = config::dir().map_err(|e| e.to_string())?.join("update");
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).map_err(|_| "Could not prepare the update folder.".to_string())?;
+    config::create_private_dir(&dir).map_err(|_| "Could not prepare the update folder.".to_string())?;
     let file = dir.join(ASSET);
     let sig_file = dir.join(format!("{ASSET}.sig"));
     download(&r.asset, &file)?;
@@ -245,7 +245,9 @@ pub fn cleanup() {
     if let Ok(exe) = exe() {
         let _ = std::fs::remove_file(old_path(&exe));
     }
-    let _ = std::fs::remove_dir_all(config::dir().join("update"));
+    if let Ok(dir) = config::dir() {
+        let _ = std::fs::remove_dir_all(dir.join("update"));
+    }
 }
 
 pub const RELAUNCH_ARG: &str = "--relaunch";

@@ -14,6 +14,7 @@ pub enum Which {
     Record,
     Play,
     Loop,
+    History,
 }
 
 #[cfg(target_os = "macos")]
@@ -22,12 +23,16 @@ pub const DEFAULT_RECORD: &str = "alt+shift+super+F1";
 pub const DEFAULT_PLAY: &str = "alt+shift+super+F2";
 #[cfg(target_os = "macos")]
 pub const DEFAULT_LOOP: &str = "alt+shift+super+F3";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_HISTORY: &str = "alt+shift+super+F4";
 #[cfg(not(target_os = "macos"))]
 pub const DEFAULT_RECORD: &str = "ctrl+alt+shift+F1";
 #[cfg(not(target_os = "macos"))]
 pub const DEFAULT_PLAY: &str = "ctrl+alt+shift+F2";
 #[cfg(not(target_os = "macos"))]
 pub const DEFAULT_LOOP: &str = "ctrl+alt+shift+F3";
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_HISTORY: &str = "ctrl+alt+shift+F4";
 
 #[cfg(target_os = "macos")]
 const SPEED_MODS: &str = "alt+shift+super+";
@@ -326,9 +331,10 @@ mod tests {
 
     #[test]
     fn defaults_are_valid_and_distinct() {
-        assert!(validate(DEFAULT_RECORD, &[DEFAULT_PLAY, DEFAULT_LOOP]).is_ok());
-        assert!(validate(DEFAULT_PLAY, &[DEFAULT_RECORD, DEFAULT_LOOP]).is_ok());
-        assert!(validate(DEFAULT_LOOP, &[DEFAULT_RECORD, DEFAULT_PLAY]).is_ok());
+        assert!(validate(DEFAULT_RECORD, &[DEFAULT_PLAY, DEFAULT_LOOP, DEFAULT_HISTORY]).is_ok());
+        assert!(validate(DEFAULT_PLAY, &[DEFAULT_RECORD, DEFAULT_LOOP, DEFAULT_HISTORY]).is_ok());
+        assert!(validate(DEFAULT_LOOP, &[DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_HISTORY]).is_ok());
+        assert!(validate(DEFAULT_HISTORY, &[DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_LOOP]).is_ok());
         assert_eq!(chord_len(DEFAULT_RECORD), 4);
     }
 

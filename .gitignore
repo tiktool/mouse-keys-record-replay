@@ -1,5 +1,10 @@
 target/
 *.pem
 *.key
+*.csr
+*.p12
+*.p8
+*.cer
 .env*
 dist/
+__pycache__/

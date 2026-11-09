@@ -169,7 +169,11 @@ fn speed() -> f64 {
 
 /// (actions, seconds) of the saved recording.
 pub fn summary() -> (usize, f32) {
-    let m = MACRO.lock().unwrap();
+    summarize(&MACRO.lock().unwrap())
+}
+
+/// (actions, seconds) of any recording: presses, clicks and wheel turns.
+pub fn summarize(m: &[Step]) -> (usize, f32) {
     let actions = m
         .iter()
         .filter(|s| match s.ev {
@@ -189,6 +193,15 @@ pub fn looping() -> bool {
 
 pub fn has_recording() -> bool {
     MACRO.lock().unwrap().len() > 1
+}
+
+/// Swaps in a saved recording. Refused while recording or playing.
+pub fn set_recording(steps: Vec<Step>) -> bool {
+    if mode() != Mode::Idle {
+        return false;
+    }
+    *MACRO.lock().unwrap() = steps;
+    true
 }
 
 /// Read at the start of every pass, so a change applies to the next loop.

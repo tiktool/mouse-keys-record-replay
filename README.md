@@ -60,6 +60,7 @@ Both install scripts check the release signature before they install anything. T
 - **One shortcut per action.** Record, play once and loop, all from the keyboard. Shortcuts can be changed in Settings.
 - **Mouse and keyboard together.** Moves, clicks, scrolls, drags and key presses are captured with their original timing.
 - **Stops when you move.** Any real mouse or keyboard input ends playback instantly.
+- **Recording history.** Every recording is saved automatically. Open the list with a shortcut to switch, star, rename or delete recordings, and the one you pick is what play and loop use.
 - **Random timing.** An optional toggle shifts each press up to half a second early or late on every run, so loops do not repeat with machine precision. Positions stay exactly where you recorded them.
 - **Lives in the tray.** Starts at login, stays out of the way and shows a status card on every monitor while it records, when a recording is saved and while it loops. The card never takes focus and lets clicks pass through.
 - **Follows your theme.** Light and dark mode match your system.
@@ -74,6 +75,7 @@ Both install scripts check the release signature before they install anything. T
 | Play once | `Ctrl+Alt+Shift+F2` | `Cmd+Option+Shift+F2` |
 | Loop | `Ctrl+Alt+Shift+F3` | `Cmd+Option+Shift+F3` |
 | Playback speed 1/4x, 1/2x, 1x, 2x, 4x, custom | `Ctrl+Alt+Shift+F5` to `F10` | `Cmd+Option+Shift+F5` to `F10` |
+| Open recordings | `Ctrl+Alt+Shift+F4` | `Cmd+Option+Shift+F4` |
 | Stop playback | Move the mouse or press any key | Move the mouse or press any key |
 
 ## Privacy

@@ -6,7 +6,7 @@ use crate::config::{self, Settings, APP_NAME, VERSION};
 use crate::engine::{self, Mode};
 use crate::shortcuts::{self, Mods, Which};
 use crate::ui::hud::{Hud, HudKind};
-use crate::{autostart, icons, input, speed, ui, update};
+use crate::{autostart, history, icons, input, speed, ui, update};
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::cell::RefCell;
@@ -26,6 +26,7 @@ pub enum UserEvent {
     Show,
     Update(update::Outcome),
     Hud,
+    Saved(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub struct View {
     pub record: String,
     pub play: String,
     pub repeat: String,
+    pub history: String,
     pub looping: bool,
     pub autostart: bool,
     pub auto_update: bool,
@@ -71,6 +73,7 @@ struct Items {
     record: MenuItem,
     play: MenuItem,
     repeat: MenuItem,
+    recordings: MenuItem,
     random: CheckMenuItem,
     autostart: CheckMenuItem,
     settings: MenuItem,
@@ -87,6 +90,7 @@ struct App {
     hk_loop: Option<HotKey>,
     hk_speed: Vec<(HotKey, usize)>,
     speed_error: Option<String>,
+    hk_history: Option<HotKey>,
     tray: TrayIcon,
     items: Items,
     last_hotkey: Instant,
@@ -143,6 +147,7 @@ impl App {
             record: rec,
             play,
             repeat,
+            history: shortcuts::label(&self.settings.history),
             looping,
             autostart: self.settings.autostart,
             auto_update: self.settings.auto_update,
@@ -167,6 +172,7 @@ impl App {
             Which::Record => self.hk_record = Some(hk),
             Which::Play => self.hk_play = Some(hk),
             Which::Loop => self.hk_loop = Some(hk),
+            Which::History => self.hk_history = Some(hk),
         }
         Ok(())
     }
@@ -176,6 +182,7 @@ impl App {
             Which::Record => &mut self.hk_record,
             Which::Play => &mut self.hk_play,
             Which::Loop => &mut self.hk_loop,
+            Which::History => &mut self.hk_history,
         };
         if let Some(hk) = slot.take() {
             let _ = self.manager.unregister(hk);
@@ -187,6 +194,7 @@ impl App {
             Which::Record => &self.settings.record,
             Which::Play => &self.settings.play,
             Which::Loop => &self.settings.repeat,
+            Which::History => &self.settings.history,
         }
     }
 
@@ -195,6 +203,7 @@ impl App {
             Which::Record => self.hk_record.is_some(),
             Which::Play => self.hk_play.is_some(),
             Which::Loop => self.hk_loop.is_some(),
+            Which::History => self.hk_history.is_some(),
         }
     }
 
@@ -257,6 +266,7 @@ impl App {
         let can_play = mode != Mode::Idle || engine::has_recording();
         self.items.play.set_enabled(can_play);
         self.items.repeat.set_enabled(can_play);
+        self.items.recordings.set_enabled(mode == Mode::Idle);
         self.items.random.set_checked(self.settings.random_timing);
         self.items.autostart.set_checked(self.settings.autostart);
         let _ = self.tray.set_tooltip(Some(format!("{APP_NAME}: {}", v.status_title)));
@@ -280,7 +290,7 @@ impl App {
     }
 }
 
-const ALL: [Which; 3] = [Which::Record, Which::Play, Which::Loop];
+const ALL: [Which; 4] = [Which::Record, Which::Play, Which::Loop, Which::History];
 
 fn set_icon(tray: &TrayIcon, mode: Mode) {
     #[cfg(target_os = "macos")]
@@ -302,6 +312,9 @@ fn set_icon(tray: &TrayIcon, mode: Mode) {
 }
 
 fn after_change() {
+    if engine::mode() != Mode::Idle {
+        ui::panel::close();
+    }
     with(|a| a.refresh_tray());
     ui::refresh();
     update_hud();
@@ -388,6 +401,7 @@ pub fn set_shortcut(which: Which, mods: Mods, code: &str) -> Result<(), String> 
                     Which::Record => a.settings.record = combo.clone(),
                     Which::Play => a.settings.play = combo.clone(),
                     Which::Loop => a.settings.repeat = combo.clone(),
+                    Which::History => a.settings.history = combo.clone(),
                 }
                 config::save_settings(&a.settings);
                 a.register_all();
@@ -411,6 +425,7 @@ pub fn reset_shortcuts() {
         a.settings.record = shortcuts::DEFAULT_RECORD.into();
         a.settings.play = shortcuts::DEFAULT_PLAY.into();
         a.settings.repeat = shortcuts::DEFAULT_LOOP.into();
+        a.settings.history = shortcuts::DEFAULT_HISTORY.into();
         config::save_settings(&a.settings);
         a.notice = Some(Notice { kind: NoticeKind::Success, text: "Shortcuts are back to the defaults.".into() });
         a.register_all();
@@ -539,6 +554,7 @@ fn build_menu() -> (Menu, Items) {
         record: MenuItem::new("Start recording", true, None),
         play: MenuItem::new("Play once", true, None),
         repeat: MenuItem::new("Loop", true, None),
+        recordings: MenuItem::new("Recordings...", true, None),
         random: CheckMenuItem::new("Random timing", true, false, None),
         settings: MenuItem::new("Settings...", true, None),
         autostart: CheckMenuItem::new("Start at login", true, true, None),
@@ -554,6 +570,7 @@ fn build_menu() -> (Menu, Items) {
         &items.record,
         &items.play,
         &items.repeat,
+        &items.recordings,
         &items.random,
         &sep(),
         &items.settings,
@@ -574,6 +591,7 @@ fn on_menu(e: MenuEvent) {
             (i.record.id().clone(), 1),
             (i.play.id().clone(), 2),
             (i.repeat.id().clone(), 8),
+            (i.recordings.id().clone(), 10),
             (i.random.id().clone(), 9),
             (i.settings.id().clone(), 3),
             (i.autostart.id().clone(), 4),
@@ -592,6 +610,7 @@ fn on_menu(e: MenuEvent) {
         1 => toggle_record_from_ui(),
         2 => toggle_play_from_ui(),
         8 => toggle_loop_from_ui(),
+        10 => toggle_panel(),
         9 => {
             let on = with(|a| !a.settings.random_timing).unwrap_or(false);
             set_random_timing(on);
@@ -626,7 +645,7 @@ fn on_hotkey(e: GlobalHotKeyEvent) {
             return None;
         }
         a.last_hotkey = Instant::now();
-        let which = [(a.hk_record, Which::Record), (a.hk_play, Which::Play), (a.hk_loop, Which::Loop)]
+        let which = [(a.hk_record, Which::Record), (a.hk_play, Which::Play), (a.hk_loop, Which::Loop), (a.hk_history, Which::History)]
             .into_iter()
             .find(|(h, _)| h.is_some_and(|h| h.id() == e.id()))?
             .1;
@@ -640,7 +659,111 @@ fn on_hotkey(e: GlobalHotKeyEvent) {
         Which::Record => engine::record_hotkey(chord, &hit),
         Which::Play => engine::play_toggle(false, by, &hit),
         Which::Loop => engine::play_toggle(true, by, &hit),
+        Which::History => toggle_panel(),
     }
+}
+
+/// Opens the recordings panel at startup; used for screenshots.
+const PANEL_ARG: &str = "--recordings";
+
+fn on_saved(id: String) {
+    with(|a| {
+        a.settings.active = id;
+        config::save_settings(&a.settings);
+    });
+    refresh_panel();
+}
+
+// The recordings panel. It only opens while nothing records or plays.
+
+fn panel_rows() -> Vec<ui::panel::Row> {
+    let active = with(|a| a.settings.active.clone()).unwrap_or_default();
+    history::Store::open()
+        .map(|s| s.list())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| ui::panel::Row {
+            detail: format!(
+                "{}, {}, {} {}",
+                history::local_label(e.created),
+                length_text(e.duration_ms),
+                e.actions,
+                if e.actions == 1 { "action" } else { "actions" }
+            ),
+            active: e.id == active,
+            id: e.id,
+            name: e.name,
+            starred: e.starred,
+        })
+        .collect()
+}
+
+fn length_text(ms: u64) -> String {
+    if ms < 60_000 {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    } else {
+        format!("{} min {:02} s", ms / 60_000, ms / 1000 % 60)
+    }
+}
+
+pub fn toggle_panel() {
+    if ui::panel::is_open() {
+        ui::panel::close();
+    } else if engine::mode() == Mode::Idle {
+        ui::panel::show(panel_rows());
+    }
+}
+
+fn refresh_panel() {
+    if ui::panel::is_open() {
+        ui::panel::show(panel_rows());
+    }
+}
+
+/// Makes a saved recording the one the play shortcuts use.
+pub fn activate_recording(id: &str) {
+    ui::panel::close();
+    let Some(steps) = history::Store::open().ok().and_then(|s| s.steps(id)) else {
+        return;
+    };
+    if !engine::set_recording(steps) {
+        return;
+    }
+    with(|a| {
+        a.settings.active = id.to_string();
+        config::save_settings(&a.settings);
+    });
+    after_change();
+}
+
+pub fn rename_recording(id: &str, name: &str) {
+    if let Ok(s) = history::Store::open() {
+        s.rename(id, name);
+    }
+    refresh_panel();
+}
+
+pub fn star_recording(id: &str, on: bool) {
+    if let Ok(s) = history::Store::open() {
+        s.set_starred(id, on);
+    }
+    refresh_panel();
+}
+
+/// Deleting the active recording leaves nothing to play.
+pub fn delete_recording(id: &str) {
+    if !history::Store::open().is_ok_and(|s| s.delete(id)) {
+        return;
+    }
+    let was_active = with(|a| a.settings.active == id).unwrap_or(false);
+    if was_active && engine::set_recording(Vec::new()) {
+        with(|a| {
+            a.settings.active.clear();
+            config::save_settings(&a.settings);
+        });
+        after_change();
+    }
+    refresh_panel();
 }
 
 fn on_update(o: update::Outcome) {
@@ -672,11 +795,27 @@ fn restart_now() {
 
 fn startup() {
     let mut settings = config::load_settings();
+    let steps = match history::Store::open() {
+        Ok(store) => {
+            if let Some(id) = config::dir().ok().and_then(|d| history::migrate(&store, &d.join("recording.json"))) {
+                settings.active = id;
+                config::save_settings(&settings);
+            }
+            store.steps(&settings.active).unwrap_or_default()
+        }
+        Err(err) => {
+            eprintln!("recordings: {err}");
+            Vec::new()
+        }
+    };
     engine::init(
-        config::load_recording(),
+        steps,
         |err| send(UserEvent::Engine(err)),
         |steps| {
-            std::thread::spawn(move || config::save_recording(&steps));
+            std::thread::spawn(move || match history::Store::open().and_then(|s| s.add(&steps, history::now_secs())) {
+                Ok(e) => send(UserEvent::Saved(e.id)),
+                Err(err) => eprintln!("recordings: save failed: {err}"),
+            });
         },
     );
     let (menu, items) = build_menu();
@@ -704,6 +843,7 @@ fn startup() {
         hk_loop: None,
         hk_speed: Vec::new(),
         speed_error: None,
+        hk_history: None,
         tray,
         items,
         last_hotkey: Instant::now() - Duration::from_secs(1),
@@ -728,6 +868,9 @@ fn startup() {
     APP.with(|a| *a.borrow_mut() = Some(app));
     if first_run || has_error {
         ui::open();
+    }
+    if std::env::args().any(|a| a == PANEL_ARG) {
+        toggle_panel();
     }
     if auto_update {
         update::schedule(|o| send(UserEvent::Update(o)));
@@ -785,6 +928,7 @@ pub fn run() {
                 UserEvent::Show => ui::open(),
                 UserEvent::Update(o) => on_update(o),
                 UserEvent::Hud => update_hud(),
+                UserEvent::Saved(id) => on_saved(id),
             },
             #[cfg(target_os = "macos")]
             Event::Reopen { .. } => ui::open(),
@@ -852,8 +996,10 @@ mod instance {
         static LISTENER: Mutex<Option<UnixListener>> = Mutex::new(None);
 
         pub fn claim(wait: bool) -> bool {
-            let dir = crate::config::dir();
-            let _ = std::fs::create_dir_all(&dir);
+            // No folder for settings means no socket to share: run without the guard.
+            let Ok(dir) = crate::config::private_dir() else {
+                return true;
+            };
             let path = dir.join("instance.sock");
             if !super::retry(wait, || UnixStream::connect(&path).is_err()) {
                 return false;

@@ -18,3 +18,4 @@ mod linux;
 pub use self::linux::{close, open, refresh};
 
 pub mod hud;
+pub mod panel;

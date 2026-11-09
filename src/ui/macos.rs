@@ -35,6 +35,7 @@ const TAG_RANDOM: NSInteger = 9;
 const TAG_PERMISSION: NSInteger = 10;
 const TAG_SPEED: NSInteger = 11;
 const TAG_CUSTOM: NSInteger = 12;
+const TAG_HISTORY: NSInteger = 13;
 
 const KVK_ESCAPE: u16 = 53;
 
@@ -48,6 +49,7 @@ struct Ui {
     record: Retained<NSButton>,
     play: Retained<NSButton>,
     repeat: Retained<NSButton>,
+    history: Retained<NSButton>,
     notice: Retained<NSTextField>,
     permission: Retained<NSButton>,
     autostart: Retained<NSSwitch>,
@@ -110,6 +112,7 @@ fn on_click(sender: &NSControl) {
         TAG_RECORD => app::begin_capture(Which::Record),
         TAG_PLAY => app::begin_capture(Which::Play),
         TAG_LOOP => app::begin_capture(Which::Loop),
+        TAG_HISTORY => app::begin_capture(Which::History),
         TAG_AUTOSTART | TAG_AUTO_UPDATE | TAG_RANDOM => {
             let state: NSInteger = unsafe { msg_send![sender, state] };
             let on = state == NSControlStateValueOn;
@@ -220,6 +223,7 @@ fn apply(ui: &Ui, v: &View) {
     ui.record.setTitle(&shortcut_title(Which::Record, &v.record));
     ui.play.setTitle(&shortcut_title(Which::Play, &v.play));
     ui.repeat.setTitle(&shortcut_title(Which::Loop, &v.repeat));
+    ui.history.setTitle(&shortcut_title(Which::History, &v.history));
 
     match &v.notice {
         Some(n) => {
@@ -479,11 +483,12 @@ fn build(mtm: MainThreadMarker) -> Ui {
     let record = button(mtm, &target, "", TAG_RECORD);
     let play = button(mtm, &target, "", TAG_PLAY);
     let repeat = button(mtm, &target, "", TAG_LOOP);
-    for b in [&record, &play, &repeat] {
+    let history = button(mtm, &target, "", TAG_HISTORY);
+    for b in [&record, &play, &repeat, &history] {
         b.widthAnchor().constraintGreaterThanOrEqualToConstant(180.0).setActive(true);
     }
     let shortcuts = vstack(mtm, 8.0);
-    for (text, b) in [("Record / stop recording", &record), ("Play once / stop playback", &play), ("Loop / stop loop", &repeat)] {
+    for (text, b) in [("Record / stop recording", &record), ("Play once / stop playback", &play), ("Loop / stop loop", &repeat), ("Open recordings", &history)] {
         let row = row(mtm, &label(mtm, text, &NSFont::systemFontOfSize(NSFont::systemFontSize()), None), b);
         shortcuts.addArrangedSubview(&row);
         fill_width(&row, &shortcuts);
@@ -606,6 +611,7 @@ fn build(mtm: MainThreadMarker) -> Ui {
         record,
         play,
         repeat,
+        history,
         notice,
         permission,
         autostart,

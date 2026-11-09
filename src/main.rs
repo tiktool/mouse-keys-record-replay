@@ -6,6 +6,7 @@ mod appicon;
 mod autostart;
 mod config;
 mod engine;
+mod history;
 mod icons;
 mod input;
 mod shortcuts;
