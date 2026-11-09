@@ -24,7 +24,6 @@ case "$(uname -s)" in
 esac
 
 command -v curl >/dev/null 2>&1 || fail "curl is required."
-command -v openssl >/dev/null 2>&1 || fail "openssl is required to check the download signature. Install OpenSSL 3 (for example: brew install openssl) and run this again."
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -35,14 +34,20 @@ curl -fsSL --proto '=https' -o "$tmp/$asset.sig" "$BASE/$asset.sig" || fail "sig
 
 printf '%s\n' "$PUBLIC_KEY_PEM" > "$tmp/release.pub"
 [ "$(wc -c < "$tmp/$asset.sig" | tr -d ' ')" = "64" ] || fail "the signature file is malformed. Nothing was installed."
-if ! out=$(openssl pkeyutl -verify -pubin -inkey "$tmp/release.pub" -rawin -in "$tmp/$asset" -sigfile "$tmp/$asset.sig" 2>&1); then
+# Ed25519 checks need OpenSSL 3 (-rawin). The first openssl on PATH may be
+# older, so Homebrew's openssl@3 and the system copy are tried as well.
+verified=
+for ssl in "$(command -v openssl 2>/dev/null)" /opt/homebrew/opt/openssl@3/bin/openssl /usr/local/opt/openssl@3/bin/openssl /usr/bin/openssl; do
+  [ -n "$ssl" ] && [ -x "$ssl" ] || continue
+  if out=$("$ssl" pkeyutl -verify -pubin -inkey "$tmp/release.pub" -rawin -in "$tmp/$asset" -sigfile "$tmp/$asset.sig" 2>&1); then
+    verified=1; break
+  fi
   case "$out" in
     *"Signature Verification Failure"*|*"verification failure"*)
       fail "the download failed its signature check. Nothing was installed." ;;
-    *)
-      fail "this openssl ($(openssl version 2>/dev/null)) cannot check Ed25519 signatures. Install OpenSSL 3 (for example: brew install openssl), put it first on PATH and run this again." ;;
   esac
-fi
+done
+[ -n "$verified" ] || fail "no openssl here can check Ed25519 signatures. Install OpenSSL 3 (for example: brew install openssl) and run this again."
 say "Signature OK"
 
 if [ "$os" = macos ]; then
