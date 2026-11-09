@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" role="img" aria-label="Record a mouse path, play it once, then loop it">
+  <style>
+    .ui { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+    .phase { opacity: 0; animation: 12s linear infinite; }
+    .rec { animation-name: rec; }
+    .play { animation-name: play; }
+    .loop { animation-name: loop; }
+    @keyframes rec { 0%, 32% { opacity: 1; } 33%, 100% { opacity: 0; } }
+    @keyframes play { 0%, 33% { opacity: 0; } 34%, 57% { opacity: 1; } 58%, 100% { opacity: 0; } }
+    @keyframes loop { 0%, 58% { opacity: 0; } 59%, 99% { opacity: 1; } 100% { opacity: 0; } }
+    .trail { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: draw 12s linear infinite; }
+    @keyframes draw { 0% { stroke-dashoffset: 1000; } 33% { stroke-dashoffset: 0; } 99% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+  </style>
+  <defs>
+    <linearGradient id="win" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#121c31"/><stop offset="1" stop-color="#0c1424"/></linearGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.2" fill="#22324f"/></pattern>
+    <path id="route" d="M150 330 C 230 180, 330 170, 400 250 S 560 360, 640 230 S 720 150, 770 190"/>
+  </defs>
+
+  <rect x="8" y="8" width="864" height="424" rx="22" fill="url(#win)" stroke="#24344f"/>
+  <rect x="24" y="150" width="832" height="266" rx="14" fill="url(#dots)"/>
+
+  <g class="ui">
+    <!-- step cards -->
+    <g>
+      <rect x="24" y="24" width="268" height="110" rx="14" fill="#16223b" stroke="#2a3a5c"/>
+      <rect x="306" y="24" width="268" height="110" rx="14" fill="#16223b" stroke="#2a3a5c"/>
+      <rect x="588" y="24" width="268" height="110" rx="14" fill="#16223b" stroke="#2a3a5c"/>
+      <rect class="phase rec" x="24" y="24" width="268" height="110" rx="14" fill="none" stroke="#ff4d5e" stroke-width="2.5"/>
+      <rect class="phase play" x="306" y="24" width="268" height="110" rx="14" fill="none" stroke="#35d07f" stroke-width="2.5"/>
+      <rect class="phase loop" x="588" y="24" width="268" height="110" rx="14" fill="none" stroke="#2e95ff" stroke-width="2.5"/>
+
+      <g transform="translate(46 46)">
+        <circle cx="24" cy="24" r="22" fill="#2a1520" stroke="#ff4d5e" stroke-width="2"/>
+        <circle cx="24" cy="24" r="9" fill="#ff4d5e"/>
+      </g>
+      <text x="110" y="66" font-size="21" font-weight="700" fill="#eef4ff">1  Record</text>
+      <text x="110" y="94" font-size="15" fill="#9fb0cc">Ctrl+Alt+Shift+F1</text>
+
+      <g transform="translate(328 46)">
+        <circle cx="24" cy="24" r="22" fill="#11281d" stroke="#35d07f" stroke-width="2"/>
+        <path d="M18 14 L34 24 L18 34 Z" fill="#35d07f"/>
+      </g>
+      <text x="392" y="66" font-size="21" font-weight="700" fill="#eef4ff">2  Play once</text>
+      <text x="392" y="94" font-size="15" fill="#9fb0cc">Ctrl+Alt+Shift+F2</text>
+
+      <g transform="translate(610 46)">
+        <circle cx="24" cy="24" r="22" fill="#0f2140" stroke="#2e95ff" stroke-width="2"/>
+        <path d="M15 26 A9 9 0 0 1 31 18 M31 12 V19 H24 M33 22 A9 9 0 0 1 17 30 M17 36 V29 H24" fill="none" stroke="#2e95ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <text x="674" y="66" font-size="21" font-weight="700" fill="#eef4ff">3  Loop</text>
+      <text x="674" y="94" font-size="15" fill="#9fb0cc">Ctrl+Alt+Shift+F3</text>
+    </g>
+
+    <!-- targets the recording clicks -->
+    <g fill="#1b2a47" stroke="#2f4470">
+      <rect x="120" y="300" width="60" height="60" rx="12"/>
+      <rect x="370" y="220" width="60" height="60" rx="12"/>
+      <rect x="610" y="200" width="60" height="60" rx="12"/>
+      <rect x="740" y="160" width="60" height="60" rx="12"/>
+    </g>
+
+    <!-- recorded trail -->
+    <use href="#route" class="trail" pathLength="1000" fill="none" stroke="#ff4d5e" stroke-width="3" stroke-linecap="round" stroke-dasharray="1000" opacity="0.9"/>
+    <use href="#route" fill="none" stroke="#2e95ff" stroke-width="2" stroke-dasharray="2 10" stroke-linecap="round" opacity="0.35"/>
+
+    <!-- status pill -->
+    <g transform="translate(40 166)">
+      <g class="phase rec">
+        <rect width="150" height="34" rx="17" fill="#2a1520" stroke="#ff4d5e"/>
+        <circle cx="22" cy="17" r="6" fill="#ff4d5e"><animate attributeName="opacity" values="1;0.2;1" dur="1s" repeatCount="indefinite"/></circle>
+        <text x="38" y="23" font-size="15" font-weight="600" fill="#ffd6db">Recording</text>
+      </g>
+      <g class="phase play">
+        <rect width="150" height="34" rx="17" fill="#11281d" stroke="#35d07f"/>
+        <path d="M17 10 L29 17 L17 24 Z" fill="#35d07f"/>
+        <text x="38" y="23" font-size="15" font-weight="600" fill="#cdf5df">Playing once</text>
+      </g>
+      <g class="phase loop">
+        <rect width="150" height="34" rx="17" fill="#0f2140" stroke="#2e95ff"/>
+        <circle cx="22" cy="17" r="6" fill="none" stroke="#2e95ff" stroke-width="2.4" stroke-dasharray="26 12"><animateTransform attributeName="transform" type="rotate" from="0 22 17" to="360 22 17" dur="1.2s" repeatCount="indefinite"/></circle>
+        <text x="38" y="23" font-size="15" font-weight="600" fill="#d4e6ff">Looping</text>
+      </g>
+    </g>
+    <text x="840" y="404" font-size="13" text-anchor="end" fill="#6f82a3">Move the mouse or press a key to stop playback</text>
+
+    <!-- cursor: the hand during recording, then the replay -->
+    <g>
+      <path d="M0 0 L0 22 L6 16 L10 26 L14 24 L10 15 L18 15 Z" fill="#ffffff" stroke="#0b1220" stroke-width="1.6" stroke-linejoin="round"/>
+      <animateMotion dur="12s" repeatCount="indefinite" calcMode="linear"
+        keyPoints="0;1;1;0;1;1;0;1;1;0;1"
+        keyTimes="0;0.31;0.333;0.335;0.56;0.583;0.585;0.77;0.79;0.792;1">
+        <mpath href="#route"/>
+      </animateMotion>
+    </g>
+  </g>
+</svg>
