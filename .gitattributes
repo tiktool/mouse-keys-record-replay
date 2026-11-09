@@ -1,0 +1,6 @@
+# Package manager drafts stay in the private source repo; the release
+# snapshot (git archive) that is synced to the public repo leaves them out.
+packaging/aur export-ignore
+packaging/flathub export-ignore
+packaging/chocolatey export-ignore
+packaging/PACKAGING.md export-ignore

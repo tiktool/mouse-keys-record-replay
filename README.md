@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/tiktool/mouse-keys-record-replay/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/tiktool/mouse-keys-record-replay?label=release&color=0062d6"></a>
+  <a href="https://github.com/tiktool/mouse-keys-record-replay/actions/workflows/build.yml"><img alt="Build" src="https://github.com/tiktool/mouse-keys-record-replay/actions/workflows/build.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0062d6"></a>
   <img alt="Windows, macOS, Linux" src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-0062d6">
 </p>
@@ -86,6 +87,8 @@ There is no account and no sign-in. Recordings and settings stay on your compute
 
 ## Build from source
 
+Install Rust with rustup (https://rustup.rs) first, then:
+
 ```sh
 cargo build --release
 ```
@@ -95,6 +98,32 @@ Linux needs the GTK 3, AppIndicator, xdo and X11 development packages, for examp
 ```sh
 sudo apt install libgtk-3-dev libayatana-appindicator3-dev libxdo-dev libx11-dev libxi-dev libxtst-dev
 ```
+
+### macOS app bundle
+
+`cargo build` on macOS gives a bare binary, while the release ships an app bundle. This wraps the binary into `Mouse Keys Record Replay.app` with the Info.plist and icon from `packaging/macos`, signs it ad hoc and zips it with `ditto`:
+
+```sh
+cargo build --release
+sh packaging/macos/bundle.sh target/release/mouse-keys-record-replay dist
+codesign --verify --verbose "dist/Mouse Keys Record Replay.app"
+```
+
+The release build is universal (Apple silicon and Intel). To make the same binary, build both targets and join them with `lipo` before bundling:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+export MACOSX_DEPLOYMENT_TARGET=11.0
+cargo build --release --target aarch64-apple-darwin
+cargo build --release --target x86_64-apple-darwin
+mkdir -p dist
+lipo -create -output dist/mouse-keys-record-replay \
+  target/aarch64-apple-darwin/release/mouse-keys-record-replay \
+  target/x86_64-apple-darwin/release/mouse-keys-record-replay
+sh packaging/macos/bundle.sh dist/mouse-keys-record-replay dist
+```
+
+The app ends up in `dist/Mouse Keys Record Replay.app` and the zip in `dist/mouse-keys-record-replay-macos.zip`.
 
 ## Links
 

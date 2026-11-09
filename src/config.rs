@@ -11,6 +11,13 @@ pub const REPO_URL: &str = "https://github.com/tiktool/mouse-keys-record-replay"
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const SITE_URL: &str = "https://mouserec.com";
 
+/// The site link text: SITE_URL without its scheme, so the two cannot drift.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn site_label() -> &'static str {
+    let s = SITE_URL.strip_prefix("https://").or_else(|| SITE_URL.strip_prefix("http://")).unwrap_or(SITE_URL);
+    s.trim_end_matches('/')
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -84,5 +91,14 @@ pub fn load_recording() -> Vec<Step> {
 pub fn save_recording(steps: &[Step]) {
     if let Ok(b) = serde_json::to_vec(steps) {
         let _ = write_atomic(&dir().join("recording.json"), &b);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn site_label_is_the_url_host() {
+        assert_eq!(super::site_label(), "mouserec.com");
+        assert!(super::SITE_URL.ends_with(super::site_label()));
     }
 }

@@ -76,6 +76,9 @@ fn curl() -> Command {
     let path = if cfg!(windows) { r"C:\Windows\System32\curl.exe" } else { "/usr/bin/curl" };
     let mut c = Command::new(path);
     c.args(["-fsSL", "--proto", "=https", "--max-time", "120", "--max-filesize", MAX_BYTES]);
+    // GitHub's download edge can answer 504 for a while after a release; curl
+    // treats 5xx and timeouts as transient, so this is three tries in all.
+    c.args(["--retry", "2", "--retry-delay", "3"]);
     c.args(["-H", concat!("User-Agent: mouse-keys-record-replay/", env!("CARGO_PKG_VERSION"))]);
     #[cfg(windows)]
     {
@@ -96,15 +99,18 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
     Ok(out.stdout)
 }
 
-fn download(url: &str, to: &Path) -> Result<(), String> {
-    let ok = curl()
-        .arg("-o")
-        .arg(to)
-        .arg(url)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if ok { Ok(()) } else { Err("The update could not be downloaded. It will be tried again later.".into()) }
+fn curl_to(to: &Path, extra: &[&str], url: &str) -> bool {
+    curl().args(extra).arg("-o").arg(to).arg(url).status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// The release download URL first, then the API asset URL, which keeps
+/// working while the download edge answers 504.
+fn download(a: &Asset, to: &Path) -> Result<(), String> {
+    if curl_to(to, &[], &a.browser) || curl_to(to, &["-H", "Accept: application/octet-stream"], &a.api) {
+        Ok(())
+    } else {
+        Err("The update could not be downloaded. It will be tried again later.".into())
+    }
 }
 
 pub fn verify(data: &[u8], sig: &[u8]) -> bool {
@@ -113,10 +119,15 @@ pub fn verify(data: &[u8], sig: &[u8]) -> bool {
     key.verify_strict(data, &Signature::from_bytes(&sig)).is_ok()
 }
 
+struct Asset {
+    browser: String,
+    api: String,
+}
+
 struct Release {
     version: String,
-    asset: String,
-    sig: String,
+    asset: Asset,
+    sig: Asset,
 }
 
 fn latest() -> Result<Release, String> {
@@ -124,11 +135,10 @@ fn latest() -> Result<Release, String> {
     let v: serde_json::Value = serde_json::from_slice(&body).map_err(|_| "GitHub sent an unexpected answer.".to_string())?;
     let version = v["tag_name"].as_str().ok_or("No release found.")?.to_string();
     let url_of = |name: &str| {
-        v["assets"].as_array().and_then(|a| {
-            a.iter()
-                .find(|x| x["name"].as_str() == Some(name))
-                .and_then(|x| x["browser_download_url"].as_str())
-                .map(str::to_string)
+        let x = v["assets"].as_array()?.iter().find(|x| x["name"].as_str() == Some(name))?;
+        Some(Asset {
+            browser: x["browser_download_url"].as_str()?.to_string(),
+            api: x["url"].as_str()?.to_string(),
         })
     };
     let asset = url_of(ASSET).ok_or("This release has no download for your system yet.")?;

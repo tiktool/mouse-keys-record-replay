@@ -9,7 +9,9 @@
 
     $repo = 'tiktool/mouse-keys-record-replay'
     $asset = 'mouse-keys-record-replay-windows-x64.exe'
-    $base = "https://github.com/$repo/releases/latest/download"
+    $releases = "https://github.com/$repo/releases"
+    $api = "https://api.github.com/repos/$repo/releases/latest"
+    $assetsApi = "https://api.github.com/repos/$repo/releases/assets"
     $publicKey = 'uNFBmOjrwZCgQiQi+kemAO7kwutgcHyjkMdzTggxd4s='
     $dir = Join-Path $env:LOCALAPPDATA 'Programs\MouseKeysRecordReplay'
     $target = Join-Path $dir 'mouse-keys-record-replay.exe'
@@ -95,13 +97,72 @@ public static class MkrrEd25519 {
 '@
     }
 
+    # GitHub's download edge can answer 504 for a while after a release, so
+    # every request retries, and a failing /latest/download/ URL falls back to
+    # the versioned one.
+    function Invoke-Retry([scriptblock]$Request) {
+        for ($i = 1; ; $i++) {
+            try { return & $Request } catch {
+                if ($i -ge 5) { throw }
+                Start-Sleep -Seconds 3
+            }
+        }
+    }
+    $state = @{ Tag = $null; Release = $null; Tried = $false }
+    # The release JSON from the API, fetched at most once: it names the tag for
+    # the versioned URL and the asset ids for the API download.
+    function Get-Release {
+        if (-not $state.Tried) {
+            $state.Tried = $true
+            try { $state.Release = Invoke-Retry { Invoke-RestMethod -Uri $api -TimeoutSec 30 } } catch { }
+        }
+        return $state.Release
+    }
+    function Get-ReleaseTag {
+        if ($state.Tag) { return $state.Tag }
+        $t = $null
+        $rel = Get-Release
+        if ($rel) { $t = $rel.tag_name }
+        if (-not $t) {
+            # /releases/latest redirects to /releases/tag/<tag>.
+            try {
+                $r = Invoke-Retry { Invoke-WebRequest -UseBasicParsing -Method Head -Uri "$releases/latest" -TimeoutSec 30 }
+                $u = if ($r.BaseResponse.ResponseUri) { $r.BaseResponse.ResponseUri } else { $r.BaseResponse.RequestMessage.RequestUri }
+                $t = ([string]$u).TrimEnd('/').Split('/')[-1]
+            } catch { }
+        }
+        if ($t -notmatch '^v[0-9]') { return $null }
+        $state.Tag = $t
+        return $t
+    }
+    # /latest/download/, then the versioned URL, then the API asset URL (served
+    # when the download edge answers 504).
+    function Save-ReleaseFile([string]$Name, [string]$OutFile) {
+        try {
+            Invoke-Retry { Invoke-WebRequest -UseBasicParsing -Uri "$releases/latest/download/$Name" -OutFile $OutFile -TimeoutSec 120 }
+            return
+        } catch { }
+        $t = Get-ReleaseTag
+        if ($t) {
+            try {
+                Invoke-Retry { Invoke-WebRequest -UseBasicParsing -Uri "$releases/download/$t/$Name" -OutFile $OutFile -TimeoutSec 120 }
+                return
+            } catch { }
+        }
+        $id = $null
+        $rel = Get-Release
+        if ($rel) { $id = ($rel.assets | Where-Object { $_.name -eq $Name } | Select-Object -First 1).id }
+        if ("$id" -notmatch '^[0-9]+$') { throw "Could not download $Name from GitHub. Try again in a few minutes." }
+        Invoke-Retry { Invoke-WebRequest -UseBasicParsing -Uri "$assetsApi/$id" -Headers @{ Accept = 'application/octet-stream' } -OutFile $OutFile -TimeoutSec 120 }
+    }
+
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("mkrr-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
         $file = Join-Path $tmp $asset
         Write-Host "Downloading $asset"
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile $file
-        Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset.sig" -OutFile "$file.sig"
+        Save-ReleaseFile $asset $file
+        Save-ReleaseFile "$asset.sig" "$file.sig"
 
         $ok = [MkrrEd25519]::Verify([Convert]::FromBase64String($publicKey), [IO.File]::ReadAllBytes($file), [IO.File]::ReadAllBytes("$file.sig"))
         if (-not $ok) { throw 'The download failed its signature check. Nothing was installed.' }

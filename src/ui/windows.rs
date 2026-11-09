@@ -543,7 +543,8 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
     {
         let mut c = Canvas { g: null_mut(), k, hdc, fonts: &state.fonts, texts: Vec::new(), hits: Vec::new() };
 
-        let site_w = c.measure(Font::Body, "tik.tools");
+        let site_label = crate::config::site_label();
+        let site_w = c.measure(Font::Body, site_label);
         let reset_w = c.measure(Font::Caption, "Reset to defaults");
         let chip_label = |w: Which| {
             if v.capturing == Some(w) {
@@ -573,7 +574,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         c.text(PAD + 48, 18, 280, 24, crate::config::APP_NAME, Font::Title, p.text, DT_SINGLELINE | DT_VCENTER);
         c.text(PAD + 48, 41, 280, 16, &format!("Version {}", v.version), Font::Small, p.sub, DT_SINGLELINE | DT_VCENTER);
         let site_color = if hover == Some(Hit::Site) { lighten(ACCENT, 0.25) } else { ACCENT };
-        c.text(W - PAD - site_w, 28, site_w, 20, "tik.tools", Font::Body, site_color, DT_SINGLELINE | DT_VCENTER);
+        c.text(W - PAD - site_w, 28, site_w, 20, site_label, Font::Body, site_color, DT_SINGLELINE | DT_VCENTER);
         c.hit(W - PAD - site_w - 4, 26, site_w + 8, 24, Hit::Site);
 
         // Status
