@@ -267,3 +267,14 @@ pub fn permission_ok(prompt: bool) -> bool {
     let listen = unsafe { CGPreflightListenEventAccess() || (prompt && CGRequestListenEventAccess()) };
     ax && listen
 }
+
+/// The System Settings pane for the first permission still missing, without prompting.
+pub fn missing_pane() -> Option<&'static str> {
+    if !unsafe { AXIsProcessTrusted() } {
+        Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+    } else if !unsafe { CGPreflightListenEventAccess() } {
+        Some("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+    } else {
+        None
+    }
+}

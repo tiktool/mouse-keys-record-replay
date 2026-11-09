@@ -517,8 +517,8 @@ pub fn shutdown() {
     }
 }
 
-fn permission_text() -> String {
-    "Allow Mouse Keys Record Replay in System Settings, Privacy and Security, under Accessibility and Input Monitoring, then try again.".into()
+pub fn permission_text() -> String {
+    "Mouse Keys Record Replay needs Accessibility and Input Monitoring. Click Open System Settings, turn the app on in the list, then try again.".into()
 }
 
 #[cfg(test)]

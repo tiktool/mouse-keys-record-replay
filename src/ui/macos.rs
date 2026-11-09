@@ -31,6 +31,7 @@ const TAG_CHECK: NSInteger = 6;
 const TAG_STAR: NSInteger = 7;
 const TAG_LOOP: NSInteger = 8;
 const TAG_RANDOM: NSInteger = 9;
+const TAG_PERMISSION: NSInteger = 10;
 
 const KVK_ESCAPE: u16 = 53;
 
@@ -45,6 +46,7 @@ struct Ui {
     play: Retained<NSButton>,
     repeat: Retained<NSButton>,
     notice: Retained<NSTextField>,
+    permission: Retained<NSButton>,
     autostart: Retained<NSSwitch>,
     auto_update: Retained<NSSwitch>,
     random: Retained<NSSwitch>,
@@ -113,6 +115,11 @@ fn on_click(sender: &NSControl) {
         TAG_RESET => app::reset_shortcuts(),
         TAG_CHECK => app::check_updates(),
         TAG_STAR => app::open_repo(),
+        TAG_PERMISSION => {
+            if let Some(pane) = crate::input::missing_pane() {
+                app::open_url(pane);
+            }
+        }
         _ => {}
     }
 }
@@ -206,6 +213,7 @@ fn apply(ui: &Ui, v: &View) {
         }
         None => ui.notice.setHidden(true),
     }
+    ui.permission.setHidden(crate::input::missing_pane().is_none());
 
     ui.autostart.setState(if v.autostart { NSControlStateValueOn } else { NSControlStateValueOff });
     ui.auto_update.setState(if v.auto_update { NSControlStateValueOn } else { NSControlStateValueOff });
@@ -447,6 +455,10 @@ fn build(mtm: MainThreadMarker) -> Ui {
     notice.setHidden(true);
     root.addArrangedSubview(&notice);
 
+    let permission = button(mtm, &target, "Open System Settings", TAG_PERMISSION);
+    permission.setHidden(true);
+    root.addArrangedSubview(&permission);
+
     let tip = wrapping(mtm, "During playback, move the mouse or press any key to take back control.", INNER, NSFont::smallSystemFontSize());
     root.addArrangedSubview(&tip);
 
@@ -497,6 +509,7 @@ fn build(mtm: MainThreadMarker) -> Ui {
         play,
         repeat,
         notice,
+        permission,
         autostart,
         auto_update,
         random,

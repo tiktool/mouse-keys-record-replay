@@ -645,10 +645,15 @@ fn startup() {
         saved_until: None,
     };
     app.register_all();
+    // Without these permissions record and play cannot work, so the window
+    // opens at startup (and after an auto-update) instead of failing on first use.
+    #[cfg(target_os = "macos")]
+    if input::missing_pane().is_some() {
+        app.notice = Some(Notice { kind: NoticeKind::Error, text: engine::permission_text() });
+    }
     let has_error = app.notice.is_some();
     app.refresh_tray();
     APP.with(|a| *a.borrow_mut() = Some(app));
-    input::permission_ok(false);
     if first_run || has_error {
         ui::open();
     }

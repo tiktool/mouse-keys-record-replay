@@ -14,8 +14,8 @@ fn main() {
         res.set_icon(out.to_str().unwrap());
         res.set("ProductName", "Mouse Keys Record Replay");
         res.set("FileDescription", "Mouse Keys Record Replay");
-        res.set("CompanyName", "TikTools");
-        res.set("LegalCopyright", "Copyright TikTools. MIT License.");
+        res.set("CompanyName", "B4Battle LLC");
+        res.set("LegalCopyright", "Copyright (c) 2026 B4Battle LLC. MIT License.");
         res.compile().unwrap();
     }
 }
