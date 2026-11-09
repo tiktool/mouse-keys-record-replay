@@ -186,6 +186,12 @@ pub fn begin_playback() {}
 
 pub fn end_playback() {}
 
+/// Keys of the speed shortcuts on a standard keymap: Ctrl, Alt, Shift, Super
+/// and F5 to F10 (X keycodes are evdev codes plus 8).
+pub fn speed_chord_key(code: u32) -> bool {
+    matches!(code, 37 | 105 | 50 | 62 | 64 | 108 | 133 | 134 | 71..=76)
+}
+
 /// X11 needs no grant; a Wayland session without an X display cannot be recorded.
 pub fn permission_ok(_prompt: bool) -> bool {
     with(|_| Ok(())).is_some()

@@ -6,7 +6,7 @@ use crate::config::{self, Settings, APP_NAME, VERSION};
 use crate::engine::{self, Mode};
 use crate::shortcuts::{self, Mods, Which};
 use crate::ui::hud::{Hud, HudKind};
-use crate::{autostart, icons, input, ui, update};
+use crate::{autostart, icons, input, speed, ui, update};
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use std::cell::RefCell;
@@ -54,6 +54,12 @@ pub struct View {
     pub autostart: bool,
     pub auto_update: bool,
     pub random_timing: bool,
+    /// Index into speed::LABELS, the custom factor and its box text.
+    pub speed_step: usize,
+    pub custom_speed: f64,
+    pub speed_error: Option<String>,
+    /// Labels of the fixed speed shortcuts, one per step.
+    pub speed_keys: Vec<String>,
     pub notice: Option<Notice>,
     pub update_text: String,
     pub version: &'static str,
@@ -79,6 +85,8 @@ struct App {
     hk_record: Option<HotKey>,
     hk_play: Option<HotKey>,
     hk_loop: Option<HotKey>,
+    hk_speed: Vec<(HotKey, usize)>,
+    speed_error: Option<String>,
     tray: TrayIcon,
     items: Items,
     last_hotkey: Instant,
@@ -139,6 +147,10 @@ impl App {
             autostart: self.settings.autostart,
             auto_update: self.settings.auto_update,
             random_timing: self.settings.random_timing,
+            speed_step: self.settings.speed_step.min(speed::CUSTOM),
+            custom_speed: self.settings.custom_speed,
+            speed_error: self.speed_error.clone(),
+            speed_keys: shortcuts::speed_shortcuts().iter().map(|s| shortcuts::label(s)).collect(),
             notice: self.notice.clone(),
             update_text: self.update_text.clone(),
             version: VERSION,
@@ -207,6 +219,24 @@ impl App {
         if let Some(e) = errors.into_iter().next() {
             self.notice = Some(Notice { kind: NoticeKind::Error, text: e });
         }
+    }
+
+    /// The speed shortcuts are fixed and stay registered, also while a new
+    /// record or play shortcut is captured.
+    fn register_speed(&mut self) {
+        for (i, combo) in shortcuts::speed_shortcuts().iter().enumerate() {
+            let Ok(hk) = shortcuts::hotkey(combo) else { continue };
+            if self.manager.register(hk).is_ok() {
+                self.hk_speed.push((hk, i));
+            } else if self.notice.is_none() {
+                let text = format!("{} is already used by another app, so that speed has no shortcut.", shortcuts::label(combo));
+                self.notice = Some(Notice { kind: NoticeKind::Error, text });
+            }
+        }
+    }
+
+    fn speed(&self) -> f64 {
+        speed::factor(self.settings.speed_step, self.settings.custom_speed)
     }
 
     fn refresh_tray(&mut self) {
@@ -302,7 +332,8 @@ fn update_hud() {
                 Some(card(HudKind::Recording, "RECORDING", vec![text("Press "), key(&a.settings.record), text(" to stop recording")]))
             }
             Mode::Playing if engine::looping() => {
-                Some(card(HudKind::Looping, "LOOPING", vec![text("Move your mouse or press any key to stop looping")]))
+                let title = format!("LOOPING AT {}", speed::step_label(a.settings.speed_step, a.settings.custom_speed));
+                Some(card(HudKind::Looping, &title, vec![text("Move your mouse or press any key to stop looping")]))
             }
             Mode::Idle if a.saved_until.is_some_and(|t| Instant::now() < t) => Some(card(
                 HudKind::Saved,
@@ -347,7 +378,8 @@ pub fn set_shortcut(which: Which, mods: Mods, code: &str) -> Result<(), String> 
     let combo = shortcuts::compose(mods, code);
     let result = with(|a| {
         a.capturing = None;
-        let others: Vec<String> = ALL.iter().filter(|w| **w != which).map(|w| a.combo(*w).to_string()).collect();
+        let mut others: Vec<String> = ALL.iter().filter(|w| **w != which).map(|w| a.combo(*w).to_string()).collect();
+        others.extend(shortcuts::speed_shortcuts());
         let others: Vec<&str> = others.iter().map(String::as_str).collect();
         let res = shortcuts::validate(&combo, &others).and_then(|_| a.register(which, &combo));
         match &res {
@@ -404,6 +436,35 @@ pub fn set_random_timing(on: bool) {
         config::save_settings(&a.settings);
     });
     after_change();
+}
+
+/// Picks a speed step. It applies at once, also to a playback in progress.
+pub fn set_speed_step(step: usize) {
+    let step = step.min(speed::CUSTOM);
+    with(|a| {
+        a.settings.speed_step = step;
+        a.speed_error = None;
+        engine::set_speed(a.speed());
+        config::save_settings(&a.settings);
+    });
+    after_change();
+}
+
+/// Saves the typed custom speed. A refused value keeps the previous one and
+/// is reported under the box.
+pub fn set_custom_speed(text: &str) -> Result<(), String> {
+    let res = speed::parse_custom(text);
+    with(|a| match &res {
+        Ok(v) => {
+            a.settings.custom_speed = *v;
+            a.speed_error = None;
+            engine::set_speed(a.speed());
+            config::save_settings(&a.settings);
+        }
+        Err(e) => a.speed_error = Some(e.clone()),
+    });
+    after_change();
+    res.map(|_| ())
 }
 
 pub fn set_auto_update(on: bool) {
@@ -553,6 +614,13 @@ fn on_hotkey(e: GlobalHotKeyEvent) {
     if e.state() != HotKeyState::Pressed {
         return;
     }
+    let step = with(|a| a.hk_speed.iter().find(|(h, _)| h.id() == e.id()).map(|(_, i)| *i)).flatten();
+    if let Some(step) = step {
+        set_speed_step(step);
+        // The chord that picked the speed must not count as taking back control.
+        engine::speed_hotkey(with(|a| a.speed()).unwrap_or(1.0));
+        return;
+    }
     let Some((which, chord, hit)) = with(|a| {
         if a.last_hotkey.elapsed() < Duration::from_millis(250) {
             return None;
@@ -626,6 +694,7 @@ fn startup() {
         let _ = autostart::set(true);
     }
     engine::set_random(settings.random_timing);
+    engine::set_speed(speed::factor(settings.speed_step, settings.custom_speed));
     let auto_update = settings.auto_update;
     let mut app = App {
         settings,
@@ -633,6 +702,8 @@ fn startup() {
         hk_record: None,
         hk_play: None,
         hk_loop: None,
+        hk_speed: Vec::new(),
+        speed_error: None,
         tray,
         items,
         last_hotkey: Instant::now() - Duration::from_secs(1),
@@ -645,6 +716,7 @@ fn startup() {
         saved_until: None,
     };
     app.register_all();
+    app.register_speed();
     // Without these permissions record and play cannot work, so the window
     // opens at startup (and after an auto-update) instead of failing on first use.
     #[cfg(target_os = "macos")]

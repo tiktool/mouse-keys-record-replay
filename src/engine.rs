@@ -1,6 +1,6 @@
 use crate::input::{self, Ev};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering::SeqCst};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -36,6 +36,9 @@ static ABORT: AtomicBool = AtomicBool::new(false);
 static STARTING: AtomicBool = AtomicBool::new(false);
 static LOOPING: AtomicBool = AtomicBool::new(false);
 static RANDOM: AtomicBool = AtomicBool::new(false);
+/// Playback speed as f64 bits; 1.0 by default.
+static SPEED: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000);
+static CHORD: Mutex<ChordGate> = Mutex::new(ChordGate { held: Vec::new(), used: false });
 static REC: Mutex<Option<Rec>> = Mutex::new(None);
 static MACRO: Mutex<Vec<Step>> = Mutex::new(Vec::new());
 static HOOK: Mutex<Option<input::Hook>> = Mutex::new(None);
@@ -53,6 +56,11 @@ const MIN_PASS: Duration = Duration::from_millis(50);
 /// Random timing moves each press this far, in microseconds, earlier or later.
 const JITTER_MIN: i64 = 100_000;
 const JITTER_MAX: i64 = 500_000;
+/// Shortest real time between replaying a press and its release. Injection
+/// keeps every down and up in order, so apps that read input events see each
+/// pair at any speed, but games and apps that poll key state miss a key that
+/// goes up in the same instant it went down. 5 ms spans a 200 Hz poll.
+const MIN_HOLD: Duration = Duration::from_millis(5);
 
 pub fn init(
     saved: Vec<Step>,
@@ -101,9 +109,62 @@ pub fn on_input(ev: Ev, injected: bool) {
                 r.steps.push(Step { t, ev });
             }
         }
-        Mode::Playing => ABORT.store(true, SeqCst),
+        Mode::Playing => {
+            let stop = match ev {
+                Ev::Key { code, down, .. } if input::speed_chord_key(code) => CHORD.lock().unwrap().key(code, down),
+                _ => true,
+            };
+            if stop {
+                ABORT.store(true, SeqCst);
+            }
+        }
         Mode::Idle => {}
     }
+}
+
+/// Lets the speed shortcuts change speed during playback without stopping
+/// it. Their modifier and F keys are held back while pressed; once all are up
+/// playback stops unless a speed shortcut fired in between. Every other key
+/// and any mouse input still stops playback at once.
+struct ChordGate {
+    held: Vec<u32>,
+    used: bool,
+}
+
+impl ChordGate {
+    /// Returns true when this key event should stop playback.
+    fn key(&mut self, code: u32, down: bool) -> bool {
+        if down {
+            if !self.held.contains(&code) {
+                self.held.push(code);
+            }
+            return false;
+        }
+        self.held.retain(|&k| k != code);
+        if !self.held.is_empty() {
+            return false;
+        }
+        !std::mem::replace(&mut self.used, false)
+    }
+
+    fn reset(&mut self) {
+        self.held.clear();
+        self.used = false;
+    }
+}
+
+pub fn set_speed(f: f64) {
+    SPEED.store(f.to_bits(), SeqCst);
+}
+
+/// A speed shortcut fired: the same chord's key presses must not stop playback.
+pub fn speed_hotkey(f: f64) {
+    set_speed(f);
+    CHORD.lock().unwrap().used = true;
+}
+
+fn speed() -> f64 {
+    f64::from_bits(SPEED.load(SeqCst))
 }
 
 /// (actions, seconds) of the saved recording.
@@ -372,6 +433,7 @@ pub fn play(repeat: bool) {
         return;
     }
     ABORT.store(false, SeqCst);
+    CHORD.lock().unwrap().reset();
     LOOPING.store(repeat, SeqCst);
     notify(None);
     thread::spawn(move || {
@@ -414,25 +476,87 @@ pub fn play(repeat: bool) {
     });
 }
 
-/// Replays steps on their original timeline. Returns true when the user
-/// interrupted. Every key and button still held is released on the way out.
+/// Position on the recording's timeline, in recorded microseconds. It moves
+/// at the speed read on every tick, so a change applies to the very next
+/// event without restarting.
+struct Clock {
+    pos: f64,
+    last: Instant,
+}
+
+impl Clock {
+    fn new(now: Instant) -> Clock {
+        Clock { pos: 0.0, last: now }
+    }
+
+    fn advance(&mut self, now: Instant, speed: f64) {
+        self.pos += now.saturating_duration_since(self.last).as_secs_f64() * 1e6 * speed;
+        self.last = now;
+    }
+
+    /// Real time until timeline position `t` at `speed`, never negative.
+    fn wait(&self, t: u64, speed: f64) -> Duration {
+        Duration::from_secs_f64(((t as f64 - self.pos) / speed / 1e6).max(0.0))
+    }
+}
+
+/// The key or button an event presses or releases, for MIN_HOLD.
+fn hold_id(ev: &Ev) -> Option<(u64, bool)> {
+    match *ev {
+        Ev::Key { code, down, .. } => Some((code as u64, down)),
+        Ev::Button { b, down, .. } => Some((1 << 32 | b as u64, down)),
+        _ => None,
+    }
+}
+
+/// Sleeps in short slices until `until`. Returns false when the user interrupted.
+fn sleep_until(until: Instant) -> bool {
+    loop {
+        if ABORT.load(SeqCst) {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= until {
+            return true;
+        }
+        thread::sleep((until - now).min(Duration::from_millis(2)));
+    }
+}
+
+/// Replays steps on their recorded timeline at the current speed. Returns
+/// true when the user interrupted. Every key and button still held is
+/// released on the way out.
 fn run(steps: &[Step]) -> bool {
-    let start = Instant::now();
+    let mut clock = Clock::new(Instant::now());
     let mut held: Vec<Ev> = Vec::new();
+    let mut pressed: Vec<(u64, Instant)> = Vec::new();
     let mut buttons = 0u32;
     let mut interrupted = false;
     'outer: for s in steps {
-        let due = start + Duration::from_micros(s.t);
         loop {
             if ABORT.load(SeqCst) {
                 interrupted = true;
                 break 'outer;
             }
-            let now = Instant::now();
-            if now >= due {
+            let sp = speed();
+            clock.advance(Instant::now(), sp);
+            if clock.pos >= s.t as f64 {
                 break;
             }
-            thread::sleep((due - now).min(Duration::from_millis(2)));
+            thread::sleep(clock.wait(s.t, sp).min(Duration::from_millis(2)));
+        }
+        // The clock keeps running while a release waits, so later events catch up.
+        if let Some((id, down)) = hold_id(&s.ev) {
+            if down {
+                pressed.retain(|p| p.0 != id);
+                pressed.push((id, Instant::now()));
+            } else if let Some(i) = pressed.iter().position(|p| p.0 == id) {
+                let (_, at) = pressed.swap_remove(i);
+                if !sleep_until(at + MIN_HOLD) {
+                    interrupted = true;
+                    break 'outer;
+                }
+            }
         }
         match s.ev {
             Ev::Key { code, down, .. } => {
@@ -640,5 +764,88 @@ mod tests {
         let mut s = vec![mv(), btn(true, 10), btn(false, 10), btn(true, 900), btn(false, 900), btn(true, 880), btn(false, 880)];
         trim_menu(&mut s, &|_, _| false);
         assert_eq!(s.len(), 3);
+    }
+
+    const STEPS: [f64; 6] = [0.25, 0.5, 1.0, 2.0, 4.0, 100.0];
+
+    #[test]
+    fn clock_scales_delays_by_speed() {
+        let t0 = Instant::now();
+        for sp in STEPS {
+            let mut c = Clock::new(t0);
+            // One recorded second takes 1/speed real seconds.
+            let w = c.wait(1_000_000, sp).as_secs_f64();
+            assert!((w - 1.0 / sp).abs() < 1e-9, "{sp}: {w}");
+            c.advance(t0 + Duration::from_millis(10), sp);
+            assert!((c.pos - 10_000.0 * sp).abs() < 1e-6, "{sp}: {}", c.pos);
+        }
+    }
+
+    #[test]
+    fn clock_follows_a_live_speed_change() {
+        let t0 = Instant::now();
+        let mut c = Clock::new(t0);
+        c.advance(t0 + Duration::from_millis(100), 1.0);
+        c.advance(t0 + Duration::from_millis(200), 4.0);
+        assert!((c.pos - 500_000.0).abs() < 1e-6);
+        assert!((c.wait(1_000_000, 4.0).as_secs_f64() - 0.125).abs() < 1e-9);
+        // A position already passed never asks for a negative wait.
+        assert_eq!(c.wait(10, 0.25), Duration::ZERO);
+    }
+
+    #[test]
+    fn random_timing_scales_with_speed_never_negative_or_reordered() {
+        // Presses 1.2 s apart, so a half second shift never needs clamping.
+        let mut src = vec![at(0, mv())];
+        for i in 0..30u64 {
+            let code = 65 + (i % 5) as u32;
+            src.push(at(1_000_000 + i * 1_200_000, key(code, true)));
+            src.push(at(1_000_000 + i * 1_200_000 + 30_000, key(code, false)));
+            src.push(at(1_000_000 + i * 1_200_000 + 60_000, mv()));
+        }
+        let mut rng = Rng(0xDEAD_BEEF_1234_5678);
+        for sp in STEPS {
+            for _ in 0..50 {
+                let out = jitter(&src, &mut rng);
+                let c = Clock::new(Instant::now());
+                let mut last = Duration::ZERO;
+                for (a, b) in out.iter().zip(&src) {
+                    assert_eq!(a.ev, b.ev);
+                    // Real delay from playback start at this speed is ordered.
+                    let w = c.wait(a.t, sp);
+                    assert!(w >= last);
+                    last = w;
+                    let off = (a.t as f64 - b.t as f64).abs() / sp / 1e6;
+                    assert!(off <= 0.5 / sp + 1e-9, "{sp}: {off}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn chord_gate_keeps_playing_through_a_speed_shortcut() {
+        let mut g = ChordGate { held: Vec::new(), used: false };
+        assert!(!g.key(17, true));
+        assert!(!g.key(18, true));
+        assert!(!g.key(118, true));
+        g.used = true;
+        assert!(!g.key(118, false));
+        assert!(!g.key(17, false));
+        assert!(!g.key(18, false));
+        // The same keys with no speed shortcut firing still stop playback.
+        assert!(!g.key(17, true));
+        assert!(g.key(17, false));
+        g.used = true;
+        g.reset();
+        assert!(g.held.is_empty() && !g.used);
+    }
+
+    #[test]
+    fn presses_and_releases_share_a_hold_id() {
+        let d = hold_id(&key(65, true).ev).unwrap();
+        let u = hold_id(&key(65, false).ev).unwrap();
+        assert_eq!((d.0, d.1, u.1), (u.0, true, false));
+        assert_ne!(hold_id(&btn(true, 0).ev).unwrap().0, d.0);
+        assert!(hold_id(&mv().ev).is_none());
     }
 }

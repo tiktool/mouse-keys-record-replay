@@ -254,6 +254,11 @@ pub fn begin_playback() {}
 
 pub fn end_playback() {}
 
+/// Keys of the speed shortcuts: Cmd, Shift, Option, Control and F5 to F10.
+pub fn speed_chord_key(code: u32) -> bool {
+    matches!(code, 0x36..=0x38 | 0x3A..=0x3E | 0x60..=0x62 | 0x64 | 0x65 | 0x6D)
+}
+
 pub fn permission_ok(prompt: bool) -> bool {
     let ax = unsafe {
         if prompt {

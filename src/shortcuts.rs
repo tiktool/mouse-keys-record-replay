@@ -29,6 +29,21 @@ pub const DEFAULT_PLAY: &str = "ctrl+alt+shift+F2";
 #[cfg(not(target_os = "macos"))]
 pub const DEFAULT_LOOP: &str = "ctrl+alt+shift+F3";
 
+#[cfg(target_os = "macos")]
+const SPEED_MODS: &str = "alt+shift+super+";
+#[cfg(not(target_os = "macos"))]
+const SPEED_MODS: &str = "ctrl+alt+shift+";
+/// Fixed speed shortcuts, one per speed::LABELS entry, left to right.
+pub const SPEED_KEYS: [&str; crate::speed::COUNT] = ["F5", "F6", "F7", "F8", "F9", "F10"];
+
+pub fn speed_shortcut(step: usize) -> String {
+    format!("{SPEED_MODS}{}", SPEED_KEYS[step])
+}
+
+pub fn speed_shortcuts() -> Vec<String> {
+    (0..SPEED_KEYS.len()).map(speed_shortcut).collect()
+}
+
 /// Canonical text form, for example "ctrl+alt+shift+F1". The key is a W3C
 /// `KeyboardEvent.code` name such as "KeyA", "Digit1" or "F5".
 pub fn compose(m: Mods, code: &str) -> String {
@@ -284,7 +299,7 @@ pub fn validate(s: &str, others: &[&str]) -> Result<(), String> {
     for other in others {
         if let Some((om, ocode)) = parse(other) {
             if om == m && ocode == code {
-                return Err("Record, play once and loop each need their own shortcut.".into());
+                return Err("Another action already uses this shortcut. Choose another one.".into());
             }
         }
     }
@@ -351,5 +366,31 @@ mod tests {
     fn labels_read_naturally() {
         assert_eq!(label("ctrl+alt+shift+F1"), "Ctrl + Alt + Shift + F1");
         assert_eq!(label("ctrl+Digit7"), "Ctrl + 7");
+    }
+
+    #[test]
+    fn speed_shortcuts_map_to_steps_in_order() {
+        let all = speed_shortcuts();
+        let want = [0.25, 0.5, 1.0, 2.0, 4.0, 100.0];
+        for (i, s) in all.iter().enumerate() {
+            let (m, code) = parse(s).unwrap();
+            assert_eq!(code, format!("F{}", i + 5));
+            assert_eq!(m, parse(DEFAULT_RECORD).unwrap().0);
+            assert!(hotkey(s).is_ok());
+            assert_eq!(crate::speed::factor(i, 100.0), want[i]);
+        }
+        let mut ids: Vec<u32> = all.iter().map(|s| hotkey(s).unwrap().id()).collect();
+        ids.extend([DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_LOOP].map(|s| hotkey(s).unwrap().id()));
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 9);
+    }
+
+    #[test]
+    fn user_shortcut_cannot_take_a_speed_key() {
+        let speeds = speed_shortcuts();
+        let others: Vec<&str> = speeds.iter().map(|s| s.as_str()).collect();
+        assert!(validate(&speed_shortcut(3), &others).is_err());
+        assert!(validate(DEFAULT_RECORD, &others).is_ok());
     }
 }

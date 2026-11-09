@@ -29,6 +29,9 @@ pub struct Settings {
     pub welcomed: bool,
     pub auto_update: bool,
     pub random_timing: bool,
+    /// Index into speed::LABELS; the last step plays at `custom_speed`.
+    pub speed_step: usize,
+    pub custom_speed: f64,
 }
 
 impl Default for Settings {
@@ -41,6 +44,8 @@ impl Default for Settings {
             welcomed: false,
             auto_update: true,
             random_timing: false,
+            speed_step: crate::speed::DEFAULT_STEP,
+            custom_speed: crate::speed::DEFAULT_CUSTOM,
         }
     }
 }
@@ -96,6 +101,25 @@ pub fn save_recording(steps: &[Step]) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_without_speed_load_with_defaults() {
+        let old = r#"{"record":"ctrl+alt+shift+F1","play":"ctrl+alt+shift+F2","loop":"ctrl+alt+shift+F3","autostart":false,"welcomed":true,"auto_update":true,"random_timing":true}"#;
+        let s: Settings = serde_json::from_str(old).unwrap();
+        assert!(!s.autostart && s.welcomed && s.random_timing);
+        assert_eq!(s.repeat, "ctrl+alt+shift+F3");
+        assert_eq!(s.speed_step, crate::speed::DEFAULT_STEP);
+        assert_eq!(s.custom_speed, crate::speed::DEFAULT_CUSTOM);
+    }
+
+    #[test]
+    fn speed_round_trips() {
+        let s = Settings { speed_step: 5, custom_speed: 2.5, ..Settings::default() };
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!((back.speed_step, back.custom_speed), (5, 2.5));
+    }
+
     #[test]
     fn site_label_is_the_url_host() {
         assert_eq!(super::site_label(), "mouserec.com");

@@ -1,6 +1,7 @@
 use crate::app::{self, NoticeKind, View};
 use crate::engine::Mode;
 use crate::shortcuts::{Mods, Which};
+use crate::speed;
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
@@ -8,7 +9,7 @@ use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSBox, NSBoxType, NSButton, NSColor, NSControl,
     NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSEventMask, NSEventModifierFlags,
-    NSEventType, NSFont, NSImage, NSLayoutConstraint, NSStackView, NSStackViewGravity, NSSwitch,
+    NSEventType, NSFont, NSImage, NSLayoutConstraint, NSSlider, NSStackView, NSStackViewDistribution, NSStackViewGravity, NSSwitch,
     NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate,
     NSWindowStyleMask,
 };
@@ -32,6 +33,8 @@ const TAG_STAR: NSInteger = 7;
 const TAG_LOOP: NSInteger = 8;
 const TAG_RANDOM: NSInteger = 9;
 const TAG_PERMISSION: NSInteger = 10;
+const TAG_SPEED: NSInteger = 11;
+const TAG_CUSTOM: NSInteger = 12;
 
 const KVK_ESCAPE: u16 = 53;
 
@@ -50,6 +53,10 @@ struct Ui {
     autostart: Retained<NSSwitch>,
     auto_update: Retained<NSSwitch>,
     random: Retained<NSSwitch>,
+    speed: Retained<NSSlider>,
+    speed_value: Retained<NSTextField>,
+    custom: Retained<NSTextField>,
+    speed_hint: Retained<NSTextField>,
     update_text: Retained<NSTextField>,
 }
 
@@ -111,6 +118,18 @@ fn on_click(sender: &NSControl) {
                 TAG_AUTO_UPDATE => app::set_auto_update(on),
                 _ => app::set_random_timing(on),
             }
+        }
+        TAG_SPEED => {
+            let step = sender.integerValue().clamp(0, speed::CUSTOM as NSInteger) as usize;
+            if step != app::view().map_or(usize::MAX, |v| v.speed_step) {
+                app::set_speed_step(step);
+            }
+        }
+        TAG_CUSTOM => {
+            if app::view().is_some_and(|v| v.speed_step != speed::CUSTOM) {
+                app::set_speed_step(speed::CUSTOM);
+            }
+            let _ = app::set_custom_speed(&sender.stringValue().to_string());
         }
         TAG_RESET => app::reset_shortcuts(),
         TAG_CHECK => app::check_updates(),
@@ -218,6 +237,27 @@ fn apply(ui: &Ui, v: &View) {
     ui.autostart.setState(if v.autostart { NSControlStateValueOn } else { NSControlStateValueOff });
     ui.auto_update.setState(if v.auto_update { NSControlStateValueOn } else { NSControlStateValueOff });
     ui.random.setState(if v.random_timing { NSControlStateValueOn } else { NSControlStateValueOff });
+
+    let step = v.speed_step.min(speed::CUSTOM);
+    ui.speed.setIntegerValue(step as NSInteger);
+    ui.speed_value.setStringValue(&NSString::from_str(&speed::step_label(step, v.custom_speed)));
+    let custom = step == speed::CUSTOM;
+    ui.custom.setEnabled(custom);
+    // Never overwrite what is being typed.
+    if ui.custom.currentEditor().is_none() {
+        ui.custom.setStringValue(&NSString::from_str(&speed::custom_text(v.custom_speed)));
+    }
+    match &v.speed_error {
+        Some(e) => {
+            ui.speed_hint.setStringValue(&NSString::from_str(e));
+            ui.speed_hint.setTextColor(Some(&NSColor::systemRedColor()));
+        }
+        None => {
+            let hint = if custom { "Type 0.1 to 1000, then press Return." } else { "Changes apply at once, also mid-playback." };
+            ui.speed_hint.setStringValue(&NSString::from_str(hint));
+            ui.speed_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
+        }
+    }
 
     ui.update_text.setStringValue(&NSString::from_str(&v.update_text));
     ui.update_text.setHidden(v.update_text.is_empty());
@@ -448,8 +488,66 @@ fn build(mtm: MainThreadMarker) -> Ui {
         shortcuts.addArrangedSubview(&row);
         fill_width(&row, &shortcuts);
     }
+    // The speed shortcuts are fixed, so they are listed as text.
+    let keys: Vec<String> = app::view().map(|v| v.speed_keys).unwrap_or_default();
+    let first = keys.first().cloned().unwrap_or_default();
+    let last = keys.last().map(|k| k.chars().skip_while(|c| !c.is_ascii_alphanumeric()).collect::<String>()).unwrap_or_default();
+    let speed_keys = label(mtm, &format!("{first} to {last}"), &NSFont::systemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::secondaryLabelColor()));
+    let speed_keys_row = row(mtm, &label(mtm, "Change speed", &NSFont::systemFontOfSize(NSFont::systemFontSize()), None), &speed_keys);
+    shortcuts.addArrangedSubview(&speed_keys_row);
+    fill_width(&speed_keys_row, &shortcuts);
     root.addArrangedSubview(&shortcuts);
     fill_width(&shortcuts, &root);
+
+    // Playback speed, right under the record and play shortcuts.
+    let speed_title = label(mtm, "Playback speed", &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()), None);
+    let speed_value = label(mtm, "", &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::controlAccentColor()));
+    let speed_head = row(mtm, &speed_title, &speed_value);
+    root.addArrangedSubview(&speed_head);
+    fill_width(&speed_head, &root);
+    root.setCustomSpacing_afterView(8.0, &speed_head);
+    let slider = unsafe {
+        NSSlider::sliderWithValue_minValue_maxValue_target_action(
+            speed::DEFAULT_STEP as f64,
+            0.0,
+            speed::CUSTOM as f64,
+            Some(&target),
+            Some(sel!(clicked:)),
+            mtm,
+        )
+    };
+    slider.setTag(TAG_SPEED);
+    slider.setNumberOfTickMarks(speed::COUNT as NSInteger);
+    slider.setAllowsTickMarkValuesOnly(true);
+    slider.setTranslatesAutoresizingMaskIntoConstraints(false);
+    let custom = NSTextField::textFieldWithString(&NSString::from_str(""), mtm);
+    custom.setTag(TAG_CUSTOM);
+    custom.setPlaceholderString(Some(&NSString::from_str("100")));
+    unsafe {
+        custom.setTarget(Some(&target));
+        custom.setAction(Some(sel!(clicked:)));
+    }
+    custom.setTranslatesAutoresizingMaskIntoConstraints(false);
+    custom.widthAnchor().constraintEqualToConstant(72.0).setActive(true);
+    let custom_x = label(mtm, "x", &NSFont::systemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::secondaryLabelColor()));
+    let slider_row = hstack(mtm, 6.0);
+    slider_row.addView_inGravity(&slider, NSStackViewGravity::Leading);
+    slider_row.addView_inGravity(&custom, NSStackViewGravity::Trailing);
+    slider_row.addView_inGravity(&custom_x, NSStackViewGravity::Trailing);
+    root.addArrangedSubview(&slider_row);
+    fill_width(&slider_row, &root);
+    slider.widthAnchor().constraintEqualToConstant(INNER - 72.0 - 30.0).setActive(true);
+    root.setCustomSpacing_afterView(2.0, &slider_row);
+    // Tick labels spread over the slider width so each sits under its stop.
+    let ticks = hstack(mtm, 0.0);
+    ticks.setDistribution(NSStackViewDistribution::EqualSpacing);
+    for l in speed::LABELS {
+        ticks.addArrangedSubview(&label(mtm, l, &NSFont::systemFontOfSize(NSFont::smallSystemFontSize()), Some(&NSColor::secondaryLabelColor())));
+    }
+    root.addArrangedSubview(&ticks);
+    ticks.widthAnchor().constraintEqualToConstant(INNER - 72.0 - 30.0).setActive(true);
+    let speed_hint = wrapping(mtm, "", INNER, NSFont::smallSystemFontSize());
+    root.addArrangedSubview(&speed_hint);
 
     let notice = wrapping(mtm, "", INNER, NSFont::systemFontSize());
     notice.setHidden(true);
@@ -513,6 +611,10 @@ fn build(mtm: MainThreadMarker) -> Ui {
         autostart,
         auto_update,
         random,
+        speed: slider,
+        speed_value,
+        custom,
+        speed_hint,
         update_text,
     }
 }

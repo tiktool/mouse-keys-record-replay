@@ -185,6 +185,11 @@ pub fn end_playback() {
     unsafe { timeEndPeriod(1) };
 }
 
+/// Keys of the speed shortcuts: Ctrl, Alt, Shift, Windows and F5 to F10.
+pub fn speed_chord_key(vk: u32) -> bool {
+    matches!(vk, 0x10..=0x12 | 0xA0..=0xA5 | 0x5B | 0x5C | 0x74..=0x79)
+}
+
 pub fn permission_ok(_prompt: bool) -> bool {
     true
 }

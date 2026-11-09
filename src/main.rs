@@ -9,6 +9,7 @@ mod engine;
 mod icons;
 mod input;
 mod shortcuts;
+mod speed;
 mod ui;
 mod update;
 

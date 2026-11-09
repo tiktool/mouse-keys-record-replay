@@ -32,10 +32,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use crate::app::{self, NoticeKind, View};
 use crate::engine::Mode;
 use crate::shortcuts::{Mods, Which};
+use crate::speed;
 
 /// Client size in logical pixels (96 dpi).
 const W: i32 = 460;
-const H: i32 = 712;
+const H: i32 = 834;
 const PAD: i32 = 20;
 const CARD_W: i32 = W - 2 * PAD;
 const PIXEL_FORMAT_32BPP_ARGB: i32 = 0x0026_200A;
@@ -103,6 +104,8 @@ enum Hit {
     Check,
     Star,
     Site,
+    Speed(usize),
+    CustomField,
 }
 
 impl Hit {
@@ -169,6 +172,8 @@ struct State {
     pressed: Option<Hit>,
     tracking: bool,
     icon: (i32, Vec<u8>),
+    /// Text of the custom speed box while it is being typed in.
+    edit: Option<String>,
 }
 
 thread_local! {
@@ -305,10 +310,19 @@ pub fn open() {
         let mut info: MONITORINFO = zeroed();
         info.cbSize = size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(monitor, &mut info);
+        let work = info.rcWork;
         let mut r = RECT { left: 0, top: 0, right: W * dx as i32 / 96, bottom: H * dx as i32 / 96 };
         AdjustWindowRectExForDpi(&mut r, STYLE, 0, 0, dx);
+        // A short screen at a high scale gets the whole window drawn smaller
+        // rather than cut off at the bottom.
+        let frame = (r.bottom - r.top) - H * dx as i32 / 96;
+        let fit = ((work.bottom - work.top - frame).max(1) * 96 / H) as u32;
+        let scale = dx.min(fit).max(72);
+        if scale < dx {
+            r = RECT { left: 0, top: 0, right: W * scale as i32 / 96, bottom: H * scale as i32 / 96 };
+            AdjustWindowRectExForDpi(&mut r, STYLE, 0, 0, dx);
+        }
         let (ww, wh) = (r.right - r.left, r.bottom - r.top);
-        let work = info.rcWork;
         let x = work.left + ((work.right - work.left) - ww) / 2;
         let y = (work.top + ((work.bottom - work.top) - wh) / 2).max(work.top);
         let class = class_name();
@@ -317,7 +331,7 @@ pub fn open() {
         if hwnd.is_null() {
             return;
         }
-        let dpi = GetDpiForWindow(hwnd).max(96);
+        let dpi = GetDpiForWindow(hwnd).max(96).min(scale.max(72));
         let dark = !apps_use_light_theme();
         STATE.with(|s| {
             *s.borrow_mut() = Some(State {
@@ -329,6 +343,7 @@ pub fn open() {
                 pressed: None,
                 tracking: false,
                 icon: (0, Vec::new()),
+                edit: None,
             })
         });
         WINDOW.with(|w| w.set(hwnd));
@@ -558,6 +573,13 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
             }
         };
         let chip_w = [Which::Record, Which::Play, Which::Loop].map(|w| (c.measure(Font::Strong, &chip_label(w)) + 28).max(120));
+        let speed_chip = match (v.speed_keys.first(), v.speed_keys.last()) {
+            (Some(a), Some(b)) => format!("{a} to {}", b.rsplit(' ').next().unwrap_or(b)),
+            _ => String::new(),
+        };
+        let speed_chip_w = (c.measure(Font::Strong, &speed_chip) + 28).max(120);
+        let speed_label_w = speed::LABELS.map(|l| c.measure(Font::Small, l));
+        let edit = state.edit.clone();
 
         unsafe {
             GdipCreateFromHDC(hdc, &mut c.g);
@@ -579,7 +601,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
 
         // Status
         let y = 72;
-        let card_h = 124;
+        let card_h = 124 + SPEED_ROW;
         card(&c, y, card_h, p);
         let dot = match v.mode {
             Mode::Idle => p.success,
@@ -590,7 +612,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         c.text(PAD + 34, y + 14, CARD_W - 50, 22, &v.status_title, Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER);
         c.text(PAD + 16, y + 38, CARD_W - 32, 36, &v.status_detail, Font::Detail, p.sub, DT_WORDBREAK | DT_END_ELLIPSIS);
         let bw = (CARD_W - 32 - 24) / 3;
-        let by = y + card_h - 14 - 32;
+        let by = y + 124 - 14 - 32;
         let (rec_text, rec_color) = if v.mode == Mode::Recording { ("Stop recording", RED) } else { ("Start recording", ACCENT) };
         button(&mut c, PAD + 16, by, bw, 32, rec_text, Look::Primary(rec_color), hover == Some(Hit::Record), Hit::Record, p);
         let can_play = v.mode != Mode::Idle || crate::engine::has_recording();
@@ -599,18 +621,27 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         let play_look = if can_play { Look::Secondary } else { Look::Disabled };
         button(&mut c, PAD + 16 + bw + 12, by, bw, 32, play_text, play_look, hover == Some(Hit::Play), Hit::Play, p);
         button(&mut c, PAD + 16 + (bw + 12) * 2, by, bw, 32, loop_text, play_look, hover == Some(Hit::Loop), Hit::Loop, p);
+        speed_row(&mut c, y + 124, v, edit.as_deref(), &speed_label_w, hover, p);
 
         // Shortcuts
-        let y = 208;
+        let y = 208 + SPEED_ROW;
         c.text(PAD + 4, y, 200, 16, "Shortcuts", Font::Caption, p.sub, DT_SINGLELINE | DT_VCENTER);
         let reset_color = if hover == Some(Hit::Reset) { lighten(ACCENT, 0.25) } else { ACCENT };
         c.text(W - PAD - 4 - reset_w, y, reset_w, 16, "Reset to defaults", Font::Caption, reset_color, DT_SINGLELINE | DT_VCENTER);
         c.hit(W - PAD - 8 - reset_w, y - 4, reset_w + 8, 24, Hit::Reset);
-        let y = 228;
+        let y = 228 + SPEED_ROW;
         let row = 46;
-        card(&c, y, row * 3, p);
+        card(&c, y, row * 4, p);
         divider(&c, y + row, p);
         divider(&c, y + row * 2, p);
+        divider(&c, y + row * 3, p);
+        // The speed shortcuts are fixed, so their chip is read-only.
+        let ry = y + row * 3;
+        c.text(PAD + 16, ry, 200, row, "Change speed", Font::Body, p.text, DT_SINGLELINE | DT_VCENTER);
+        let cx = W - PAD - 12 - speed_chip_w;
+        let cy = ry + (row - 30) / 2;
+        c.round_rect(cx, cy, speed_chip_w, 30, 6.0, p.chip, Some((p.border, 1.0)));
+        c.text(cx, cy, speed_chip_w, 30, &speed_chip, Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
         let rows = [(Which::Record, "Record and stop"), (Which::Play, "Play once"), (Which::Loop, "Loop until stopped")];
         for (i, (w, label)) in rows.into_iter().enumerate() {
             let ry = y + row * i as i32;
@@ -631,7 +662,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         }
 
         // Notice
-        let y = 370;
+        let y = 370 + SPEED_ROW + 46;
         let (text, color) = match (&v.notice, v.capturing) {
             (_, Some(_)) => ("Press the new shortcut, or Esc to cancel.".to_string(), ACCENT),
             (Some(n), None) => (
@@ -646,9 +677,9 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         c.text(PAD + 4, y, CARD_W - 8, 34, &text, Font::Small, color, DT_WORDBREAK | DT_END_ELLIPSIS);
 
         // General
-        let y = 408;
+        let y = 408 + SPEED_ROW + 46;
         c.text(PAD + 4, y, 200, 16, "General", Font::Caption, p.sub, DT_SINGLELINE | DT_VCENTER);
-        let y = 428;
+        let y = 428 + SPEED_ROW + 46;
         let row = 50;
         card(&c, y, row * 4, p);
         divider(&c, y + row, p);
@@ -672,7 +703,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         button(&mut c, W - PAD - 12 - bw, y + row * 3 + (row - 30) / 2, bw, 30, "Check now", Look::Secondary, hover == Some(Hit::Check), Hit::Check, p);
 
         // Star
-        let y = 640;
+        let y = 640 + SPEED_ROW + 46;
         let sh = 52;
         card(&c, y, sh, p);
         let bw = 150;
@@ -708,6 +739,61 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         state_hits = std::mem::take(&mut c.hits);
     }
     state.hits = state_hits;
+}
+
+/// Height of the speed slider row at the bottom of the status card.
+const SPEED_ROW: i32 = 76;
+const FIELD_W: i32 = 84;
+
+/// x of each slider stop, left to right.
+fn stops() -> [i32; speed::COUNT] {
+    let (x0, x1) = (PAD + 34, W - PAD - 16 - FIELD_W - 34);
+    std::array::from_fn(|i| x0 + (x1 - x0) * i as i32 / (speed::COUNT as i32 - 1))
+}
+
+/// Six-stop slider with the custom box beside it and a hint or error line.
+fn speed_row(c: &mut Canvas, y: i32, v: &View, edit: Option<&str>, label_w: &[i32; speed::COUNT], hover: Option<Hit>, p: &Palette) {
+    divider(c, y, p);
+    let st = stops();
+    let sel = v.speed_step.min(speed::CUSTOM);
+    let ty = y + 22;
+    c.round_rect(st[0], ty - 2, st[speed::CUSTOM] - st[0], 4, 2.0, p.border, None);
+    c.round_rect(st[0], ty - 2, st[sel] - st[0], 4, 2.0, ACCENT, None);
+    let half = (st[1] - st[0]) / 2;
+    for (i, &x) in st.iter().enumerate() {
+        let on = i <= sel;
+        c.circle(x as f32, ty as f32, if on { 4.0 } else { 3.5 }, if on { ACCENT } else { p.sub });
+        let lw = label_w[i] + 4;
+        let color = if i == sel { p.text } else { p.sub };
+        let font = if i == sel { Font::Caption } else { Font::Small };
+        c.text(x - lw / 2 - 4, ty + 10, lw + 8, 16, speed::LABELS[i], font, color, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        c.hit(x - half, y + 4, half * 2, 42, Hit::Speed(i));
+    }
+    let r = if hover.is_some_and(|h| matches!(h, Hit::Speed(_))) { 9.0 } else { 8.0 };
+    c.circle(st[sel] as f32, ty as f32, r, ACCENT);
+    c.circle(st[sel] as f32, ty as f32, r - 3.0, WHITE);
+
+    let custom = sel == speed::CUSTOM;
+    let (fx, fy) = (W - PAD - 16 - FIELD_W, y + 8);
+    let (fill, border) = match (edit.is_some(), custom) {
+        (true, _) => (p.card, (ACCENT, 2.0)),
+        (false, true) => (p.chip, (ACCENT, 1.0)),
+        (false, false) => (if hover == Some(Hit::CustomField) { p.chip_hover } else { p.bg }, (p.border, 1.0)),
+    };
+    c.round_rect(fx, fy, FIELD_W, 30, 6.0, fill, Some(border));
+    let text = match edit {
+        Some(t) => format!("{t}|"),
+        None => format!("{}x", speed::custom_text(v.custom_speed)),
+    };
+    c.text(fx + 8, fy, FIELD_W - 16, 30, &text, Font::Strong, if custom || edit.is_some() { p.text } else { p.sub }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    c.hit(fx, fy, FIELD_W, 30, Hit::CustomField);
+
+    let (line, color) = match &v.speed_error {
+        Some(e) => (e.clone(), p.error),
+        None if edit.is_some() => ("Type 0.1 to 1000, then press Enter.".to_string(), p.sub),
+        None => (format!("Playing at {}. Changes apply at once, also mid-playback.", speed::step_label(sel, v.custom_speed)), p.sub),
+    };
+    c.text(PAD + 16, y + 52, CARD_W - 32, 16, &line, Font::Small, color, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 }
 
 fn card(c: &Canvas, y: i32, h: i32, p: &Palette) {
@@ -759,6 +845,9 @@ fn act(hwnd: HWND, hit: Hit) {
     if v.capturing.is_some() && !matches!(hit, Hit::Chip(_)) {
         app::cancel_capture();
     }
+    if hit != Hit::CustomField {
+        commit_edit();
+    }
     match hit {
         // The window closes first so its own clicks are never recorded or replayed.
         Hit::Record => {
@@ -788,7 +877,58 @@ fn act(hwnd: HWND, hit: Hit) {
         Hit::Check => app::check_updates(),
         Hit::Star => app::open_repo(),
         Hit::Site => app::open_site(),
+        Hit::Speed(i) => app::set_speed_step(i),
+        Hit::CustomField => {
+            if with_state(|s| s.edit.is_none()).unwrap_or(false) {
+                app::set_speed_step(speed::CUSTOM);
+                with_state(|s| s.edit = Some(speed::custom_text(v.custom_speed)));
+                unsafe { SetFocus(hwnd) };
+                refresh();
+            }
+        }
     }
+}
+
+/// Applies the typed custom speed. A refused value keeps the old one, and
+/// the app shows why under the box.
+fn commit_edit() {
+    if let Some(text) = with_state(|s| s.edit.take()).flatten() {
+        let _ = app::set_custom_speed(&text);
+        refresh();
+    }
+}
+
+fn editing() -> bool {
+    with_state(|s| s.edit.is_some()).unwrap_or(false)
+}
+
+/// One typed character for the custom speed box.
+fn edit_char(ch: u16) {
+    match ch {
+        0x0D => {
+            let text = with_state(|s| s.edit.clone()).flatten().unwrap_or_default();
+            if app::set_custom_speed(&text).is_ok() {
+                with_state(|s| s.edit = None);
+            }
+        }
+        0x1B => {
+            with_state(|s| s.edit = None);
+        }
+        0x08 => {
+            with_state(|s| s.edit.as_mut().map(|t| t.pop()));
+        }
+        _ => {
+            let Some(c) = char::from_u32(ch as u32) else { return };
+            if c.is_ascii_digit() || matches!(c, '.' | 'x' | 'X' | 'e' | 'E') {
+                with_state(|s| {
+                    if let Some(t) = s.edit.as_mut().filter(|t| t.len() < 10) {
+                        t.push(c);
+                    }
+                });
+            }
+        }
+    }
+    refresh();
 }
 
 fn key_code(vk: u16, extended: bool) -> Option<String> {
@@ -907,6 +1047,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     if app::view().is_some_and(|v| v.capturing.is_some()) {
                         app::cancel_capture();
                     }
+                    commit_edit();
                 }
                 _ => {}
             }
@@ -919,6 +1060,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     capture_key(which, vk, lp);
                     0
                 }
+                None if editing() => DefWindowProcW(hwnd, msg, wp, lp),
                 None if vk == VK_ESCAPE => {
                     close();
                     0
@@ -927,9 +1069,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
         }
         WM_CHAR | WM_SYSCHAR | WM_SYSKEYUP | WM_KEYUP if app::view().is_some_and(|v| v.capturing.is_some()) => 0,
+        WM_CHAR if editing() => {
+            edit_char(wp as u16);
+            0
+        }
         WM_ACTIVATE => {
             if (wp & 0xFFFF) as u32 == WA_INACTIVE && app::view().is_some_and(|v| v.capturing.is_some()) {
                 app::cancel_capture();
+            }
+            if (wp & 0xFFFF) as u32 == WA_INACTIVE {
+                commit_edit();
             }
             0
         }

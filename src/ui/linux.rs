@@ -7,6 +7,7 @@ use crate::config::APP_NAME;
 use crate::engine::Mode;
 use crate::icons;
 use crate::shortcuts::{Mods, Which};
+use crate::speed;
 use gtk::gdk::{self, ModifierType};
 use gtk::gdk_pixbuf::{Colorspace, Pixbuf};
 use gtk::glib::{self, Propagation};
@@ -30,6 +31,10 @@ struct Ui {
     record: gtk::Button,
     play: gtk::Button,
     repeat: gtk::Button,
+    speed: gtk::Scale,
+    speed_value: gtk::Label,
+    custom: gtk::Entry,
+    speed_hint: gtk::Label,
     notice: gtk::Label,
     autostart: gtk::Switch,
     auto_update: gtk::Switch,
@@ -92,6 +97,30 @@ fn apply(ui: &Ui, v: &View) {
     ui.record.set_label(if v.capturing == Some(Which::Record) { waiting } else { &v.record });
     ui.play.set_label(if v.capturing == Some(Which::Play) { waiting } else { &v.play });
     ui.repeat.set_label(if v.capturing == Some(Which::Loop) { waiting } else { &v.repeat });
+
+    let step = v.speed_step.min(speed::CUSTOM);
+    if ui.speed.value().round() as usize != step {
+        ui.speed.set_value(step as f64);
+    }
+    ui.speed_value.set_text(&speed::step_label(step, v.custom_speed));
+    let custom = step == speed::CUSTOM;
+    ui.custom.set_sensitive(custom);
+    // Never overwrite what is being typed.
+    if !ui.custom.has_focus() {
+        ui.custom.set_text(&speed::custom_text(v.custom_speed));
+    }
+    let hint_ctx = ui.speed_hint.style_context();
+    match &v.speed_error {
+        Some(e) => {
+            hint_ctx.add_class("mkrr-error");
+            ui.speed_hint.set_text(e);
+        }
+        None => {
+            hint_ctx.remove_class("mkrr-error");
+            let hint = if custom { "Type 0.1 to 1000, then press Enter." } else { "Changes apply at once, also mid-playback." };
+            ui.speed_hint.set_text(hint);
+        }
+    }
 
     let ctx = ui.notice.style_context();
     for c in ["mkrr-error", "mkrr-success", "dim-label"] {
@@ -194,7 +223,60 @@ fn build() -> Ui {
     section.pack_start(&row("Record / stop recording", &record), false, false, 0);
     section.pack_start(&row("Play once / stop playback", &play), false, false, 0);
     section.pack_start(&row("Loop / stop loop", &repeat), false, false, 0);
+    // The speed shortcuts are fixed, so they are listed as text.
+    let keys: Vec<String> = app::view().map(|v| v.speed_keys).unwrap_or_default();
+    let first = keys.first().cloned().unwrap_or_default();
+    let last = keys.last().and_then(|k| k.rsplit(' ').next()).unwrap_or_default().to_string();
+    section.pack_start(&row("Change speed", &label(&format!("{first} to {last}"), &["dim-label"])), false, false, 0);
     root.pack_start(&section, false, false, 0);
+
+    // Playback speed, right under the record and play shortcuts.
+    let speed_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let speed_value = label("", &["mkrr-heading"]);
+    speed_box.pack_start(&row("Playback speed", &speed_value), false, false, 0);
+    let slider = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, speed::CUSTOM as f64, 1.0);
+    slider.set_draw_value(false);
+    slider.set_digits(0);
+    slider.set_round_digits(0);
+    slider.set_value(speed::DEFAULT_STEP as f64);
+    for (i, l) in speed::LABELS.iter().enumerate() {
+        slider.add_mark(i as f64, gtk::PositionType::Bottom, Some(l));
+    }
+    let custom = gtk::Entry::new();
+    custom.set_width_chars(7);
+    custom.set_placeholder_text(Some("100"));
+    custom.set_valign(gtk::Align::Start);
+    let slider_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    slider_row.pack_start(&slider, true, true, 0);
+    slider_row.pack_start(&custom, false, false, 0);
+    let custom_x = label("x", &["dim-label"]);
+    custom_x.set_valign(gtk::Align::Start);
+    custom_x.set_margin_top(6);
+    slider_row.pack_start(&custom_x, false, false, 0);
+    speed_box.pack_start(&slider_row, false, false, 0);
+    let speed_hint = label("", &["dim-label", "mkrr-small"]);
+    speed_box.pack_start(&speed_hint, false, false, 0);
+    root.pack_start(&speed_box, false, false, 0);
+    slider.connect_value_changed(|s| {
+        if UPDATING.with(|f| f.get()) {
+            return;
+        }
+        let step = (s.value().round().max(0.0) as usize).min(speed::CUSTOM);
+        if app::view().is_some_and(|v| v.speed_step != step) {
+            app::set_speed_step(step);
+        }
+    });
+    let commit = |e: &gtk::Entry| {
+        if app::view().is_some_and(|v| v.speed_step != speed::CUSTOM) {
+            app::set_speed_step(speed::CUSTOM);
+        }
+        let _ = app::set_custom_speed(&e.text());
+    };
+    custom.connect_activate(move |e| commit(e));
+    custom.connect_focus_out_event(move |e, _| {
+        commit(e);
+        Propagation::Proceed
+    });
     for (button, which) in [(&record, Which::Record), (&play, Which::Play), (&repeat, Which::Loop)] {
         button.connect_clicked(move |b| {
             app::begin_capture(which);
@@ -270,7 +352,25 @@ fn build() -> Ui {
         Propagation::Proceed
     });
 
-    Ui { window, header, dot, title, detail, record, play, repeat, notice, autostart, auto_update, random, update_text }
+    Ui {
+        window,
+        header,
+        dot,
+        title,
+        detail,
+        record,
+        play,
+        repeat,
+        speed: slider,
+        speed_value,
+        custom,
+        speed_hint,
+        notice,
+        autostart,
+        auto_update,
+        random,
+        update_text,
+    }
 }
 
 fn on_key(ev: &gdk::EventKey) -> Propagation {

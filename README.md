@@ -73,6 +73,7 @@ Both install scripts check the release signature before they install anything. T
 | Start or stop recording | `Ctrl+Alt+Shift+F1` | `Cmd+Option+Shift+F1` |
 | Play once | `Ctrl+Alt+Shift+F2` | `Cmd+Option+Shift+F2` |
 | Loop | `Ctrl+Alt+Shift+F3` | `Cmd+Option+Shift+F3` |
+| Playback speed 1/4x, 1/2x, 1x, 2x, 4x, custom | `Ctrl+Alt+Shift+F5` to `F10` | `Cmd+Option+Shift+F5` to `F10` |
 | Stop playback | Move the mouse or press any key | Move the mouse or press any key |
 
 ## Privacy
