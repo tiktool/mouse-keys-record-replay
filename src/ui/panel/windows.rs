@@ -613,7 +613,7 @@ fn draw(s: &mut State, hdc: HDC) {
         single,
     );
     if n > 0 {
-        let count = format!("{n} saved");
+        let count = super::count_text(&s.rows);
         c.text(
             W - PAD - 12 - 160,
             0,

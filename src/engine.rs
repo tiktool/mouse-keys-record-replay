@@ -24,6 +24,23 @@ pub enum Mode {
 pub enum StopBy {
     Hotkey(usize),
     Menu,
+    /// The recording reached `MAX_STEPS`.
+    Limit,
+}
+
+/// A recording stops and saves itself at this many events, so one left
+/// running cannot fill memory and disk. About 50 MB on disk.
+pub const MAX_STEPS: usize = 1_000_000;
+const LIMIT_TEXT: &str =
+    "The recording reached the limit of 1,000,000 events, so it stopped and was saved.";
+
+/// Adds a step unless the recording is full. True when this step filled it.
+fn push_capped(steps: &mut Vec<Step>, step: Step, max: usize) -> bool {
+    if steps.len() >= max {
+        return false;
+    }
+    steps.push(step);
+    steps.len() == max
 }
 
 struct Rec {
@@ -113,12 +130,16 @@ pub fn on_input(ev: Ev, injected: bool) {
     }
     match mode() {
         Mode::Recording => {
-            if let Some(r) = REC.lock().unwrap().as_mut() {
-                if r.skip_moves && matches!(ev, Ev::Move { .. }) {
-                    return;
+            let full = match REC.lock().unwrap().as_mut() {
+                Some(r) if !(r.skip_moves && matches!(ev, Ev::Move { .. })) => {
+                    let t = r.start.elapsed().as_micros() as u64;
+                    push_capped(&mut r.steps, Step { t, ev }, MAX_STEPS)
                 }
-                let t = r.start.elapsed().as_micros() as u64;
-                r.steps.push(Step { t, ev });
+                _ => false,
+            };
+            if full {
+                // Stopping joins the listener thread, which is this one.
+                thread::spawn(|| stop_recording(StopBy::Limit, &|_, _| false));
             }
         }
         Mode::Playing => {
@@ -415,6 +436,7 @@ pub fn stop_recording(by: StopBy, tray_hit: &dyn Fn(i32, i32) -> bool) {
     match by {
         StopBy::Hotkey(chord) => trim_chord(&mut steps, chord),
         StopBy::Menu => trim_menu(&mut steps, tray_hit),
+        StopBy::Limit => {}
     }
     drop_orphans(&mut steps);
     if steps.len() > 1 {
@@ -423,7 +445,7 @@ pub fn stop_recording(by: StopBy, tray_hit: &dyn Fn(i32, i32) -> bool) {
             save(steps);
         }
     }
-    notify(None);
+    notify(matches!(by, StopBy::Limit).then(|| LIMIT_TEXT.to_string()));
 }
 
 /// Removes the trailing key presses of the stop shortcut: walks back over key
@@ -808,6 +830,15 @@ mod tests {
                 n: 1,
             },
         }
+    }
+
+    #[test]
+    fn recording_stops_growing_at_the_cap() {
+        let mut s = Vec::new();
+        assert!(!push_capped(&mut s, mv(), 2));
+        assert!(push_capped(&mut s, mv(), 2));
+        assert!(!push_capped(&mut s, mv(), 2));
+        assert_eq!(s.len(), 2);
     }
 
     #[test]

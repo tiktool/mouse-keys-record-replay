@@ -171,6 +171,15 @@ impl Store {
         self.write_meta(&e).is_ok()
     }
 
+    /// Size on disk of one recording.
+    pub fn bytes(&self, id: &str) -> u64 {
+        [self.meta_path(id), self.steps_path(id)]
+            .iter()
+            .filter_map(|p| fs::metadata(p).ok())
+            .map(|m| m.len())
+            .sum()
+    }
+
     pub fn delete(&self, id: &str) -> bool {
         if !valid_id(id) {
             return false;
@@ -183,8 +192,10 @@ impl Store {
 }
 
 /// Moves the single recording older versions kept into the store and returns
-/// its id. The old file is renamed, never deleted; an unreadable one is left as is.
+/// its id. The old file is removed once the store reads back the same steps,
+/// along with the renamed copy earlier versions left; an unreadable one is left as is.
 pub fn migrate(store: &Store, old: &Path) -> Option<String> {
+    let _ = fs::remove_file(old.with_extension("old.json"));
     let b = fs::read(old).ok()?;
     let steps: Vec<Step> = match serde_json::from_slice(&b) {
         Ok(s) => s,
@@ -206,7 +217,9 @@ pub fn migrate(store: &Store, old: &Path) -> Option<String> {
         .map(|d| d.as_secs())
         .unwrap_or_else(now_secs);
     let e = store.add(&steps, created).ok()?;
-    let _ = fs::rename(old, old.with_extension("old.json"));
+    if store.steps(&e.id).as_ref() == Some(&steps) {
+        let _ = fs::remove_file(old);
+    }
     Some(e.id)
 }
 
@@ -391,7 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_imports_old_file_and_keeps_it() {
+    fn migration_imports_old_file_and_removes_it() {
         let d = tmp("migrate");
         let old = d.join("recording.json");
         let steps = rec(4);
@@ -401,10 +414,31 @@ mod tests {
         assert_eq!(s.steps(&id).unwrap(), steps);
         assert_eq!(s.list().len(), 1);
         assert!(!old.exists());
-        assert!(d.join("recording.old.json").exists());
+        assert!(!d.join("recording.old.json").exists());
         // A second start finds nothing left to import.
         assert!(migrate(&s, &old).is_none());
         assert_eq!(s.list().len(), 1);
+    }
+
+    #[test]
+    fn migration_removes_the_copy_older_versions_left() {
+        let d = tmp("migrate-left");
+        let left = d.join("recording.old.json");
+        fs::write(&left, b"[]").unwrap();
+        let s = Store::at(d.join("recordings"));
+        assert!(migrate(&s, &d.join("recording.json")).is_none());
+        assert!(!left.exists());
+    }
+
+    #[test]
+    fn bytes_counts_both_files() {
+        let s = Store::at(tmp("bytes"));
+        let e = s.add(&rec(3), 100).unwrap();
+        let want = fs::metadata(s.meta_path(&e.id)).unwrap().len()
+            + fs::metadata(s.steps_path(&e.id)).unwrap().len();
+        assert!(want > 0);
+        assert_eq!(s.bytes(&e.id), want);
+        assert_eq!(s.bytes("missing"), 0);
     }
 
     #[test]

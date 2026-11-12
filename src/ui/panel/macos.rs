@@ -298,7 +298,7 @@ fn content(mtm: MainThreadMarker, s: &mut State) -> Retained<NSView> {
     if !s.rows.is_empty() {
         let count = label(
             mtm,
-            &format!("{} saved", s.rows.len()),
+            &super::count_text(&s.rows),
             &NSFont::systemFontOfSize(12.0),
             &NSColor::secondaryLabelColor(),
         );

@@ -831,11 +831,14 @@ fn on_saved(id: String) {
 
 fn panel_rows() -> Vec<ui::panel::Row> {
     let active = with(|a| a.settings.active.clone()).unwrap_or_default();
-    history::Store::open()
-        .map(|s| s.list())
-        .unwrap_or_default()
+    let Ok(store) = history::Store::open() else {
+        return Vec::new();
+    };
+    store
+        .list()
         .into_iter()
         .map(|e| ui::panel::Row {
+            bytes: store.bytes(&e.id),
             detail: format!(
                 "{}, {}, {} {}",
                 history::local_label(e.created),

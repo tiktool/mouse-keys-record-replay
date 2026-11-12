@@ -210,7 +210,7 @@ fn rebuild() {
         }
         let n = s.rows.len();
         s.count.set_text(&if n > 0 {
-            format!("{n} saved")
+            super::count_text(&s.rows)
         } else {
             String::new()
         });
