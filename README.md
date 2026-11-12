@@ -60,7 +60,7 @@ Both install scripts check the release signature before they install anything. T
 - **One shortcut per action.** Record, play once and loop, all from the keyboard. Shortcuts can be changed in Settings.
 - **Mouse and keyboard together.** Moves, clicks, scrolls, drags and key presses are captured with their original timing.
 - **Stops when you move.** Any real mouse or keyboard input ends playback instantly. Turn off "Stop on mouse or key input" and only the shortcuts stop it.
-- **Clicks and keys only.** Turn on "Ignore mouse movement" and a recording keeps clicks, scrolls and key presses but no pointer movement. Clicks play wherever the pointer is, so you can keep using the mouse and keyboard while it runs, and the play or loop shortcut stops it.
+- **Clicks and keys only.** Turn on "Ignore mouse movement" and playback sends clicks, scrolls and key presses but no pointer movement, for any recording, and new recordings leave pointer movement out. Clicks play wherever the pointer is, so you can keep using the mouse and keyboard while it runs, and the play or loop shortcut stops it.
 - **Recording history.** Every recording is saved automatically. Open the list with a shortcut to switch, star, rename or delete recordings, and the one you pick is what play and loop use.
 - **Random timing.** An optional toggle shifts each press up to half a second early or late on every run, so loops do not repeat with machine precision. Positions stay exactly where you recorded them.
 - **Lives in the tray.** Starts at login, stays out of the way and shows a status card on every monitor while it records, when a recording is saved and while it loops. The card never takes focus and lets clicks pass through.

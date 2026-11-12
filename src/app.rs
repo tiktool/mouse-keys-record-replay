@@ -568,7 +568,8 @@ pub fn set_stop_on_input(on: bool) {
     after_change();
 }
 
-/// Applies to the next recording; saved recordings stay as they are.
+/// Applies at once to playback, also of saved recordings, and to the next
+/// recording. Saved recordings keep their moves on disk.
 pub fn set_skip_moves(on: bool) {
     engine::set_skip_moves(on);
     with(|a| {

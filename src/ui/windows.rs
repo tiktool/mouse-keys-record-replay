@@ -1118,7 +1118,7 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
             ),
             (
                 "Ignore mouse movement",
-                "Records clicks and keys, played at the pointer.".to_string(),
+                "Clicks and keys only. Your mouse stays free.".to_string(),
             ),
             (
                 "Updates",

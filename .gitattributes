@@ -4,3 +4,6 @@ packaging/aur export-ignore
 packaging/flathub export-ignore
 packaging/chocolatey export-ignore
 packaging/PACKAGING.md export-ignore
+
+# Private-only material never leaves this repo. tools/release-local.py refuses a snapshot that holds any of it.
+private export-ignore

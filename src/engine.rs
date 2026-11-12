@@ -235,14 +235,24 @@ fn set_macro(steps: Vec<Step>) {
 /// True when moving the mouse or pressing a key stops playback of the saved
 /// recording. False leaves the shortcuts and the tray menu as the only stop.
 pub fn input_stops() -> bool {
-    STOP_ON_INPUT.load(SeqCst) && !FREE.load(SeqCst)
+    stops(
+        STOP_ON_INPUT.load(SeqCst),
+        SKIP_MOVES.load(SeqCst),
+        FREE.load(SeqCst),
+    )
+}
+
+/// The user's own input stops playback only while playback drives the
+/// pointer: not when moves are ignored, not for a recording without moves.
+fn stops(stop_on_input: bool, skip_moves: bool, no_moves: bool) -> bool {
+    stop_on_input && !skip_moves && !no_moves
 }
 
 pub fn set_stop_on_input(on: bool) {
     STOP_ON_INPUT.store(on, SeqCst);
 }
 
-/// Read when a recording starts.
+/// Read when a recording starts, and live during playback.
 pub fn set_skip_moves(on: bool) {
     SKIP_MOVES.store(on, SeqCst);
 }
@@ -610,7 +620,7 @@ fn sleep_until(until: Instant) -> bool {
 /// true when the user interrupted. Every key and button still held is
 /// released on the way out.
 fn run(steps: &[Step]) -> bool {
-    let free = free_cursor(steps);
+    let no_moves = free_cursor(steps);
     let mut clock = Clock::new(Instant::now());
     let mut held: Vec<Ev> = Vec::new();
     let mut pressed: Vec<(u64, Instant)> = Vec::new();
@@ -658,7 +668,10 @@ fn run(steps: &[Step]) -> bool {
             }
             _ => {}
         }
-        input::inject(&at_pointer(s.ev, free, input::cursor_pos), buttons);
+        let free = no_moves || SKIP_MOVES.load(SeqCst);
+        if let Some(ev) = at_pointer(s.ev, free, input::cursor_pos) {
+            input::inject(&ev, buttons);
+        }
     }
     for h in held.iter().rev() {
         if let Ev::Key {
@@ -695,15 +708,16 @@ fn run(steps: &[Step]) -> bool {
     interrupted
 }
 
-/// In a recording without pointer movement a click lands where the pointer
-/// is now, not where it was recorded.
-fn at_pointer(ev: Ev, free: bool, pos: impl Fn() -> (i32, i32)) -> Ev {
+/// While the pointer is left to the user, recorded moves are not replayed
+/// and a click lands where the pointer is now, not where it was recorded.
+fn at_pointer(ev: Ev, free: bool, pos: impl Fn() -> (i32, i32)) -> Option<Ev> {
     match ev {
+        Ev::Move { .. } if free => None,
         Ev::Button { b, down, n, .. } if free => {
             let (x, y) = pos();
-            Ev::Button { b, down, x, y, n }
+            Some(Ev::Button { b, down, x, y, n })
         }
-        e => e,
+        e => Some(e),
     }
 }
 
@@ -1051,9 +1065,27 @@ mod tests {
             y: 300,
             n: 1,
         };
-        assert_eq!(at_pointer(btn(true, 10).ev, true, here), moved);
-        assert_eq!(at_pointer(btn(true, 10).ev, false, here), btn(true, 10).ev);
-        assert_eq!(at_pointer(key(65, true).ev, true, here), key(65, true).ev);
+        assert_eq!(at_pointer(btn(true, 10).ev, true, here), Some(moved));
+        assert_eq!(
+            at_pointer(btn(true, 10).ev, false, here),
+            Some(btn(true, 10).ev)
+        );
+        assert_eq!(
+            at_pointer(key(65, true).ev, true, here),
+            Some(key(65, true).ev)
+        );
+    }
+
+    #[test]
+    fn ignoring_moves_applies_to_playback_of_any_recording() {
+        // Reported: toggle on, a recording that holds moves, moving the mouse still stopped the loop.
+        assert!(!stops(true, true, false));
+        assert!(stops(true, false, false));
+        assert!(!stops(true, false, true));
+        assert!(!stops(false, false, false));
+        let here = || (700, 300);
+        assert_eq!(at_pointer(mv().ev, true, here), None);
+        assert_eq!(at_pointer(mv().ev, false, here), Some(mv().ev));
     }
 
     #[test]

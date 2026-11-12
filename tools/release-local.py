@@ -10,7 +10,8 @@ Steps:
            in parallel, fetched into the dist folder under the release.yml asset names.
   sign     Ed25519 over the 3 assets and SHA256SUMS with the key on this PC, checked against PUBLIC_KEY in
            src/update.rs at the tag. Needs the Python `cryptography` package.
-  publish  git archive of the tag (export-ignore applies), .github reduced to build.yml, pushed to public main as
+  publish  git archive of the tag (export-ignore applies), refused unless it is free-only (check_snapshot),
+           .github reduced to build.yml, pushed to public main as
            "Source for <tag>" by TikTool; gh release create on the public repo at that commit; the public tag must
            resolve to it.
   check    install.sh on the Mac (OpenSSL 3 at ~/reprise-build/openssl3, then stock LibreSSL) and in the WSL
@@ -42,6 +43,12 @@ NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" el
 MAC_OPENSSL3 = "$HOME/reprise-build/openssl3/openssl"
 WIN_TMP = r"C:\ProgramData\StageVisualsWorker\reprise\tmp"
 APP = "Mouse Keys Record Replay.app"
+# The public repo gets the free app only. Anything under private/ stays in this repo: export-ignore keeps it out of
+# git archive, and check_snapshot stops the publish before any push if that ever fails. A new top-level path has
+# to be added here by hand, so nothing reaches the public repo by default.
+FREE_TOP = frozenset((".gitattributes", ".github", ".gitignore", "assets", "build.rs", "Cargo.lock", "Cargo.toml",
+                      "install.ps1", "install.sh", "launch", "LICENSE", "packaging", "README.md", "src", "tools"))
+PRIVATE_MARK = b"MKRR-" + b"PRIVATE"  # split, so this file does not carry the marker
 
 
 def say(msg):
@@ -185,6 +192,19 @@ def gh(*args, check=True):
     return run("gh", *args, check=check)
 
 
+def check_snapshot(tag, snap):
+    """Refuse to publish unless the snapshot is free-only and every private source file at the tag is marked."""
+    extra = sorted(p.name for p in snap.iterdir() if p.name not in FREE_TOP)
+    marked = sorted(p.relative_to(snap).as_posix() for p in snap.rglob("*") if p.is_file() and PRIVATE_MARK in p.read_bytes())
+    private = [f for f in git("ls-tree", "-r", "-z", "--name-only", tag, "--", "private").split("\0") if f.endswith(".rs")]
+    unmarked = [f for f in private if PRIVATE_MARK.decode() not in git("show", "%s:%s" % (tag, f))]
+    if extra or marked or unmarked:
+        raise SystemExit("release-local: snapshot is not free-only, nothing was pushed. Outside the free set: %s. "
+                         "Marked private: %s. Private files without the marker: %s."
+                         % tuple(", ".join(x) or "none" for x in (extra, marked, unmarked)))
+    say("snapshot is free-only (%d private source files stay here)" % len(private))
+
+
 def step_publish(tag, dist):
     files = [dist / n for n in list(ASSETS) + [a + ".sig" for a in ASSETS] + ["SHA256SUMS", "SHA256SUMS.sig"]]
     missing = [f.name for f in files if not f.is_file()]
@@ -205,6 +225,7 @@ def step_publish(tag, dist):
             if any(m.issym() or m.islnk() or (m.isfile() and m.mode & 0o111) for m in t.getmembers()):
                 raise SystemExit("release-local: the snapshot has links or executable files; publish from Linux instead")
             t.extractall(snap, filter="data")
+        check_snapshot(tag, snap)
         build_yml = (snap / ".github" / "workflows" / "build.yml").read_bytes()
         shutil.rmtree(snap / ".github")
         (snap / ".github" / "workflows").mkdir(parents=True)
