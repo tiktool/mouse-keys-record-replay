@@ -33,6 +33,11 @@ pub struct Settings {
     pub welcomed: bool,
     pub auto_update: bool,
     pub random_timing: bool,
+    /// Moving the mouse or pressing a key stops playback. Off: only the
+    /// shortcuts stop it.
+    pub stop_on_input: bool,
+    /// Recordings keep clicks, scrolls and key presses, not pointer movement.
+    pub skip_moves: bool,
     /// Index into speed::LABELS; the last step plays at `custom_speed`.
     pub speed_step: usize,
     pub custom_speed: f64,
@@ -51,6 +56,8 @@ impl Default for Settings {
             welcomed: false,
             auto_update: true,
             random_timing: false,
+            stop_on_input: true,
+            skip_moves: false,
             speed_step: crate::speed::DEFAULT_STEP,
             custom_speed: crate::speed::DEFAULT_CUSTOM,
             history: shortcuts::DEFAULT_HISTORY.into(),
@@ -203,11 +210,27 @@ mod tests {
         assert_eq!(s.repeat, "ctrl+alt+shift+F3");
         assert_eq!(s.speed_step, crate::speed::DEFAULT_STEP);
         assert_eq!(s.custom_speed, crate::speed::DEFAULT_CUSTOM);
+        assert!(s.stop_on_input && !s.skip_moves);
+    }
+
+    #[test]
+    fn playback_options_round_trip() {
+        let s = Settings {
+            stop_on_input: false,
+            skip_moves: true,
+            ..Settings::default()
+        };
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(!back.stop_on_input && back.skip_moves);
     }
 
     #[test]
     fn speed_round_trips() {
-        let s = Settings { speed_step: 5, custom_speed: 2.5, ..Settings::default() };
+        let s = Settings {
+            speed_step: 5,
+            custom_speed: 2.5,
+            ..Settings::default()
+        };
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!((back.speed_step, back.custom_speed), (5, 2.5));
     }

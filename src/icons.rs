@@ -66,7 +66,11 @@ pub fn tray(mode: Mode, size: u32, fg: [u8; 3], colored: bool) -> Vec<u8> {
                 continue;
             }
             let i = ((py * size + px) * 4) as usize;
-            let c = if colored && tint * 2 >= cov { status } else { fg };
+            let c = if colored && tint * 2 >= cov {
+                status
+            } else {
+                fg
+            };
             out[i..i + 3].copy_from_slice(&c);
             out[i + 3] = (cov * 255 / (SS * SS)) as u8;
         }

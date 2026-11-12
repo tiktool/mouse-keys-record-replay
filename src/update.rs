@@ -62,7 +62,11 @@ fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
     let s = s.trim().trim_start_matches('v');
     let core = s.split(['-', '+']).next()?;
     let mut it = core.split('.').map(|p| p.parse::<u64>().ok());
-    Some((it.next()??, it.next().flatten().unwrap_or(0), it.next().flatten().unwrap_or(0)))
+    Some((
+        it.next()??,
+        it.next().flatten().unwrap_or(0),
+        it.next().flatten().unwrap_or(0),
+    ))
 }
 
 pub fn is_newer(remote: &str, local: &str) -> bool {
@@ -73,13 +77,31 @@ pub fn is_newer(remote: &str, local: &str) -> bool {
 }
 
 fn curl() -> Command {
-    let path = if cfg!(windows) { r"C:\Windows\System32\curl.exe" } else { "/usr/bin/curl" };
+    let path = if cfg!(windows) {
+        r"C:\Windows\System32\curl.exe"
+    } else {
+        "/usr/bin/curl"
+    };
     let mut c = Command::new(path);
-    c.args(["-fsSL", "--proto", "=https", "--max-time", "120", "--max-filesize", MAX_BYTES]);
+    c.args([
+        "-fsSL",
+        "--proto",
+        "=https",
+        "--max-time",
+        "120",
+        "--max-filesize",
+        MAX_BYTES,
+    ]);
     // GitHub's download edge can answer 504 for a while after a release; curl
     // treats 5xx and timeouts as transient, so this is three tries in all.
     c.args(["--retry", "2", "--retry-delay", "3"]);
-    c.args(["-H", concat!("User-Agent: mouse-keys-record-replay/", env!("CARGO_PKG_VERSION"))]);
+    c.args([
+        "-H",
+        concat!(
+            "User-Agent: mouse-keys-record-replay/",
+            env!("CARGO_PKG_VERSION")
+        ),
+    ]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -94,19 +116,30 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
         .output()
         .map_err(|_| "Could not reach GitHub to check for updates.".to_string())?;
     if !out.status.success() {
-        return Err("Could not reach GitHub to check for updates. Check your internet connection.".into());
+        return Err(
+            "Could not reach GitHub to check for updates. Check your internet connection.".into(),
+        );
     }
     Ok(out.stdout)
 }
 
 fn curl_to(to: &Path, extra: &[&str], url: &str) -> bool {
-    curl().args(extra).arg("-o").arg(to).arg(url).status().map(|s| s.success()).unwrap_or(false)
+    curl()
+        .args(extra)
+        .arg("-o")
+        .arg(to)
+        .arg(url)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 /// The release download URL first, then the API asset URL, which keeps
 /// working while the download edge answers 504.
 fn download(a: &Asset, to: &Path) -> Result<(), String> {
-    if curl_to(to, &[], &a.browser) || curl_to(to, &["-H", "Accept: application/octet-stream"], &a.api) {
+    if curl_to(to, &[], &a.browser)
+        || curl_to(to, &["-H", "Accept: application/octet-stream"], &a.api)
+    {
         Ok(())
     } else {
         Err("The update could not be downloaded. It will be tried again later.".into())
@@ -114,9 +147,14 @@ fn download(a: &Asset, to: &Path) -> Result<(), String> {
 }
 
 pub fn verify(data: &[u8], sig: &[u8]) -> bool {
-    let Ok(key) = VerifyingKey::from_bytes(&PUBLIC_KEY) else { return false };
-    let Ok(sig) = <[u8; 64]>::try_from(sig) else { return false };
-    key.verify_strict(data, &Signature::from_bytes(&sig)).is_ok()
+    let Ok(key) = VerifyingKey::from_bytes(&PUBLIC_KEY) else {
+        return false;
+    };
+    let Ok(sig) = <[u8; 64]>::try_from(sig) else {
+        return false;
+    };
+    key.verify_strict(data, &Signature::from_bytes(&sig))
+        .is_ok()
 }
 
 struct Asset {
@@ -131,19 +169,33 @@ struct Release {
 }
 
 fn latest() -> Result<Release, String> {
-    let body = fetch(&format!("https://api.github.com/repos/{REPO}/releases/latest"))?;
-    let v: serde_json::Value = serde_json::from_slice(&body).map_err(|_| "GitHub sent an unexpected answer.".to_string())?;
-    let version = v["tag_name"].as_str().ok_or("No release found.")?.to_string();
+    let body = fetch(&format!(
+        "https://api.github.com/repos/{REPO}/releases/latest"
+    ))?;
+    let v: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|_| "GitHub sent an unexpected answer.".to_string())?;
+    let version = v["tag_name"]
+        .as_str()
+        .ok_or("No release found.")?
+        .to_string();
     let url_of = |name: &str| {
-        let x = v["assets"].as_array()?.iter().find(|x| x["name"].as_str() == Some(name))?;
+        let x = v["assets"]
+            .as_array()?
+            .iter()
+            .find(|x| x["name"].as_str() == Some(name))?;
         Some(Asset {
             browser: x["browser_download_url"].as_str()?.to_string(),
             api: x["url"].as_str()?.to_string(),
         })
     };
     let asset = url_of(ASSET).ok_or("This release has no download for your system yet.")?;
-    let sig = url_of(&format!("{ASSET}.sig")).ok_or("This release is not signed, so it was not installed.")?;
-    Ok(Release { version, asset, sig })
+    let sig = url_of(&format!("{ASSET}.sig"))
+        .ok_or("This release is not signed, so it was not installed.")?;
+    Ok(Release {
+        version,
+        asset,
+        sig,
+    })
 }
 
 fn check_and_install() -> Result<Option<String>, String> {
@@ -153,7 +205,8 @@ fn check_and_install() -> Result<Option<String>, String> {
     }
     let dir = config::dir().map_err(|e| e.to_string())?.join("update");
     let _ = std::fs::remove_dir_all(&dir);
-    config::create_private_dir(&dir).map_err(|_| "Could not prepare the update folder.".to_string())?;
+    config::create_private_dir(&dir)
+        .map_err(|_| "Could not prepare the update folder.".to_string())?;
     let file = dir.join(ASSET);
     let sig_file = dir.join(format!("{ASSET}.sig"));
     download(&r.asset, &file)?;
@@ -194,7 +247,10 @@ fn install(file: &Path, _dir: &Path) -> Result<(), String> {
     let exe = exe()?;
     let old = old_path(&exe);
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(&exe, &old).map_err(|_| "The update needs write access to the app folder. Download it from GitHub instead.".to_string())?;
+    std::fs::rename(&exe, &old).map_err(|_| {
+        "The update needs write access to the app folder. Download it from GitHub instead."
+            .to_string()
+    })?;
     if std::fs::copy(file, &exe).is_err() {
         let _ = std::fs::rename(&old, &exe);
         return Err("The update could not be installed. Download it from GitHub instead.".into());
@@ -204,18 +260,32 @@ fn install(file: &Path, _dir: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "macos")]
 fn install(file: &Path, dir: &Path) -> Result<(), String> {
-    let Some(app) = bundle() else { return replace_binary(file) };
+    let Some(app) = bundle() else {
+        return replace_binary(file);
+    };
     let out = dir.join("unpacked");
-    let ok = Command::new("/usr/bin/ditto").arg("-x").arg("-k").arg(file).arg(&out).status().map(|s| s.success()).unwrap_or(false);
-    let new_app = std::fs::read_dir(&out)
-        .ok()
-        .and_then(|mut d| d.find_map(|e| e.ok().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "app"))));
+    let ok = Command::new("/usr/bin/ditto")
+        .arg("-x")
+        .arg("-k")
+        .arg(file)
+        .arg(&out)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let new_app = std::fs::read_dir(&out).ok().and_then(|mut d| {
+        d.find_map(|e| {
+            e.ok()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "app"))
+        })
+    });
     let (true, Some(new_app)) = (ok, new_app) else {
         return Err("The update could not be unpacked.".into());
     };
     let old = old_path(&app);
     let _ = std::fs::remove_dir_all(&old);
-    std::fs::rename(&app, &old).map_err(|_| "The update needs write access to the Applications folder.".to_string())?;
+    std::fs::rename(&app, &old)
+        .map_err(|_| "The update needs write access to the Applications folder.".to_string())?;
     if std::fs::rename(&new_app, &app).is_err() {
         let _ = std::fs::rename(&old, &app);
         return Err("The update could not be installed.".into());
@@ -230,7 +300,8 @@ fn replace_binary(file: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let exe = exe()?;
     let staged = old_path(&exe).with_extension("new");
-    std::fs::copy(file, &staged).map_err(|_| "The update needs write access to the app folder.".to_string())?;
+    std::fs::copy(file, &staged)
+        .map_err(|_| "The update needs write access to the app folder.".to_string())?;
     let _ = std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755));
     std::fs::rename(&staged, &exe).map_err(|_| "The update could not be installed.".to_string())
 }
@@ -257,7 +328,11 @@ pub const RELAUNCH_ARG: &str = "--relaunch";
 pub fn relaunch() -> ! {
     #[cfg(target_os = "macos")]
     if let Some(app) = bundle() {
-        let _ = Command::new("/usr/bin/open").arg("-n").arg(&app).args(["--args", RELAUNCH_ARG]).spawn();
+        let _ = Command::new("/usr/bin/open")
+            .arg("-n")
+            .arg(&app)
+            .args(["--args", RELAUNCH_ARG])
+            .spawn();
         std::process::exit(0);
     }
     if let Ok(exe) = exe() {

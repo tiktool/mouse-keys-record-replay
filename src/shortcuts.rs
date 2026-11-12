@@ -53,7 +53,12 @@ pub fn speed_shortcuts() -> Vec<String> {
 /// `KeyboardEvent.code` name such as "KeyA", "Digit1" or "F5".
 pub fn compose(m: Mods, code: &str) -> String {
     let mut s = String::new();
-    for (on, name) in [(m.ctrl, "ctrl"), (m.alt, "alt"), (m.shift, "shift"), (m.sup, "super")] {
+    for (on, name) in [
+        (m.ctrl, "ctrl"),
+        (m.alt, "alt"),
+        (m.shift, "shift"),
+        (m.sup, "super"),
+    ] {
         if on {
             s.push_str(name);
             s.push('+');
@@ -86,7 +91,12 @@ pub fn hotkey(s: &str) -> Result<HotKey, String> {
 /// Number of physical keys in the shortcut, used to cut it from a recording.
 pub fn chord_len(s: &str) -> usize {
     parse(s)
-        .map(|(m, _)| 1 + [m.ctrl, m.alt, m.shift, m.sup].iter().filter(|b| **b).count())
+        .map(|(m, _)| {
+            1 + [m.ctrl, m.alt, m.shift, m.sup]
+                .iter()
+                .filter(|b| **b)
+                .count()
+        })
         .unwrap_or(1)
 }
 
@@ -145,7 +155,12 @@ pub fn label(s: &str) -> String {
     let key = key_label(&code);
     if cfg!(target_os = "macos") {
         let mut out = String::new();
-        for (on, sym) in [(m.ctrl, "\u{2303}"), (m.alt, "\u{2325}"), (m.shift, "\u{21E7}"), (m.sup, "\u{2318}")] {
+        for (on, sym) in [
+            (m.ctrl, "\u{2303}"),
+            (m.alt, "\u{2325}"),
+            (m.shift, "\u{21E7}"),
+            (m.sup, "\u{2318}"),
+        ] {
             if on {
                 out.push_str(sym);
             }
@@ -155,7 +170,12 @@ pub fn label(s: &str) -> String {
     } else {
         let sup = if cfg!(windows) { "Win" } else { "Super" };
         let mut parts: Vec<&str> = Vec::new();
-        for (on, name) in [(m.ctrl, "Ctrl"), (m.alt, "Alt"), (m.shift, "Shift"), (m.sup, sup)] {
+        for (on, name) in [
+            (m.ctrl, "Ctrl"),
+            (m.alt, "Alt"),
+            (m.shift, "Shift"),
+            (m.sup, sup),
+        ] {
             if on {
                 parts.push(name);
             }
@@ -168,12 +188,25 @@ pub fn label(s: &str) -> String {
 pub fn is_modifier_code(code: &str) -> bool {
     matches!(
         code,
-        "ControlLeft" | "ControlRight" | "AltLeft" | "AltRight" | "ShiftLeft" | "ShiftRight" | "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight" | "Fn" | "CapsLock"
+        "ControlLeft"
+            | "ControlRight"
+            | "AltLeft"
+            | "AltRight"
+            | "ShiftLeft"
+            | "ShiftRight"
+            | "MetaLeft"
+            | "MetaRight"
+            | "OSLeft"
+            | "OSRight"
+            | "Fn"
+            | "CapsLock"
     )
 }
 
 fn is_fkey(code: &str) -> bool {
-    code.strip_prefix('F').and_then(|n| n.parse::<u8>().ok()).is_some_and(|n| (1..=24).contains(&n))
+    code.strip_prefix('F')
+        .and_then(|n| n.parse::<u8>().ok())
+        .is_some_and(|n| (1..=24).contains(&n))
 }
 
 fn system_name() -> &'static str {
@@ -297,29 +330,49 @@ pub fn validate(s: &str, others: &[&str]) -> Result<(), String> {
     if is_modifier_code(&code) {
         return Err("Add a regular key after the modifier keys.".into());
     }
-    let cmd = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
-    if !(m.ctrl || m.alt || m.sup) && !is_fkey(&code) {
-        return Err(format!("Add {cmd} or Alt so this shortcut does not get in the way of typing."));
+    let cmd = if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
+    if !(m.ctrl || m.alt || m.sup || is_fkey(&code)) {
+        return Err(format!(
+            "Add {cmd} or Alt so this shortcut does not get in the way of typing."
+        ));
     }
     for other in others {
         if let Some((om, ocode)) = parse(other) {
             if om == m && ocode == code {
-                return Err("Another action already uses this shortcut. Choose another one.".into());
+                return Err(
+                    "Another action already uses this shortcut. Choose another one.".into(),
+                );
             }
         }
     }
     for (r, what) in RESERVED {
         if let Some((rm, rcode)) = parse(r) {
             if rm == m && rcode == code {
-                return Err(format!("{} uses this shortcut for {what}. Choose another one.", system_name()));
+                return Err(format!(
+                    "{} uses this shortcut for {what}. Choose another one.",
+                    system_name()
+                ));
             }
         }
     }
-    let primary = if cfg!(target_os = "macos") { m.sup } else { m.ctrl };
-    let only_primary = primary && !m.alt && !m.shift && (cfg!(target_os = "macos") && !m.ctrl || !cfg!(target_os = "macos") && !m.sup);
+    let primary = if cfg!(target_os = "macos") {
+        m.sup
+    } else {
+        m.ctrl
+    };
+    let only_primary = primary
+        && !m.alt
+        && !m.shift
+        && (cfg!(target_os = "macos") && !m.ctrl || !cfg!(target_os = "macos") && !m.sup);
     if only_primary {
         if let Some((_, what)) = EDITING_KEYS.iter().find(|(k, _)| *k == code) {
-            return Err(format!("Most apps use this shortcut for {what}. Choose another one."));
+            return Err(format!(
+                "Most apps use this shortcut for {what}. Choose another one."
+            ));
         }
     }
     Ok(())
@@ -331,10 +384,26 @@ mod tests {
 
     #[test]
     fn defaults_are_valid_and_distinct() {
-        assert!(validate(DEFAULT_RECORD, &[DEFAULT_PLAY, DEFAULT_LOOP, DEFAULT_HISTORY]).is_ok());
-        assert!(validate(DEFAULT_PLAY, &[DEFAULT_RECORD, DEFAULT_LOOP, DEFAULT_HISTORY]).is_ok());
-        assert!(validate(DEFAULT_LOOP, &[DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_HISTORY]).is_ok());
-        assert!(validate(DEFAULT_HISTORY, &[DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_LOOP]).is_ok());
+        assert!(validate(
+            DEFAULT_RECORD,
+            &[DEFAULT_PLAY, DEFAULT_LOOP, DEFAULT_HISTORY]
+        )
+        .is_ok());
+        assert!(validate(
+            DEFAULT_PLAY,
+            &[DEFAULT_RECORD, DEFAULT_LOOP, DEFAULT_HISTORY]
+        )
+        .is_ok());
+        assert!(validate(
+            DEFAULT_LOOP,
+            &[DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_HISTORY]
+        )
+        .is_ok());
+        assert!(validate(
+            DEFAULT_HISTORY,
+            &[DEFAULT_RECORD, DEFAULT_PLAY, DEFAULT_LOOP]
+        )
+        .is_ok());
         assert_eq!(chord_len(DEFAULT_RECORD), 4);
     }
 
@@ -361,7 +430,12 @@ mod tests {
 
     #[test]
     fn compose_parse_roundtrip() {
-        let m = Mods { ctrl: true, alt: false, shift: true, sup: false };
+        let m = Mods {
+            ctrl: true,
+            alt: false,
+            shift: true,
+            sup: false,
+        };
         let s = compose(m, "KeyK");
         assert_eq!(s, "ctrl+shift+KeyK");
         assert_eq!(parse(&s), Some((m, "KeyK".into())));

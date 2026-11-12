@@ -40,6 +40,9 @@ struct Ui {
     autostart: gtk::Switch,
     auto_update: gtk::Switch,
     random: gtk::Switch,
+    stop_on_input: gtk::Switch,
+    skip_moves: gtk::Switch,
+    tip: gtk::Label,
     update_text: gtk::Label,
 }
 
@@ -88,23 +91,42 @@ pub fn close() {
 fn apply(ui: &Ui, v: &View) {
     CAPTURING.with(|c| c.set(v.capturing));
     MODE.with(|m| m.set(v.mode));
-    ui.header.set_subtitle(Some(&format!("Version {}", v.version)));
+    ui.header
+        .set_subtitle(Some(&format!("Version {}", v.version)));
     ui.dot.queue_draw();
     ui.title.set_text(&v.status_title);
     ui.detail.set_text(&v.status_detail);
     ui.detail.set_visible(!v.status_detail.is_empty());
 
     let waiting = "Press new shortcut...";
-    ui.record.set_label(if v.capturing == Some(Which::Record) { waiting } else { &v.record });
-    ui.play.set_label(if v.capturing == Some(Which::Play) { waiting } else { &v.play });
-    ui.repeat.set_label(if v.capturing == Some(Which::Loop) { waiting } else { &v.repeat });
-    ui.history.set_label(if v.capturing == Some(Which::History) { waiting } else { &v.history });
+    ui.record.set_label(if v.capturing == Some(Which::Record) {
+        waiting
+    } else {
+        &v.record
+    });
+    ui.play.set_label(if v.capturing == Some(Which::Play) {
+        waiting
+    } else {
+        &v.play
+    });
+    ui.repeat.set_label(if v.capturing == Some(Which::Loop) {
+        waiting
+    } else {
+        &v.repeat
+    });
+    ui.history
+        .set_label(if v.capturing == Some(Which::History) {
+            waiting
+        } else {
+            &v.history
+        });
 
     let step = v.speed_step.min(speed::CUSTOM);
     if ui.speed.value().round() as usize != step {
         ui.speed.set_value(step as f64);
     }
-    ui.speed_value.set_text(&speed::step_label(step, v.custom_speed));
+    ui.speed_value
+        .set_text(&speed::step_label(step, v.custom_speed));
     let custom = step == speed::CUSTOM;
     ui.custom.set_sensitive(custom);
     // Never overwrite what is being typed.
@@ -119,7 +141,11 @@ fn apply(ui: &Ui, v: &View) {
         }
         None => {
             hint_ctx.remove_class("mkrr-error");
-            let hint = if custom { "Type 0.1 to 1000, then press Enter." } else { "Changes apply at once, also mid-playback." };
+            let hint = if custom {
+                "Type 0.1 to 1000, then press Enter."
+            } else {
+                "Changes apply at once, also mid-playback."
+            };
             ui.speed_hint.set_text(hint);
         }
     }
@@ -152,6 +178,13 @@ fn apply(ui: &Ui, v: &View) {
     if ui.random.is_active() != v.random_timing {
         ui.random.set_active(v.random_timing);
     }
+    if ui.stop_on_input.is_active() != v.stop_on_input {
+        ui.stop_on_input.set_active(v.stop_on_input);
+    }
+    if ui.skip_moves.is_active() != v.skip_moves {
+        ui.skip_moves.set_active(v.skip_moves);
+    }
+    ui.tip.set_text(&v.stop_hint);
 
     ui.update_text.set_text(&v.update_text);
     ui.update_text.set_visible(!v.update_text.is_empty());
@@ -161,7 +194,11 @@ fn build() -> Ui {
     let provider = gtk::CssProvider::new();
     let _ = provider.load_from_data(CSS.as_bytes());
     if let Some(screen) = gdk::Screen::default() {
-        gtk::StyleContext::add_provider_for_screen(&screen, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
 
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
@@ -230,15 +267,28 @@ fn build() -> Ui {
     // The speed shortcuts are fixed, so they are listed as text.
     let keys: Vec<String> = app::view().map(|v| v.speed_keys).unwrap_or_default();
     let first = keys.first().cloned().unwrap_or_default();
-    let last = keys.last().and_then(|k| k.rsplit(' ').next()).unwrap_or_default().to_string();
-    section.pack_start(&row("Change speed", &label(&format!("{first} to {last}"), &["dim-label"])), false, false, 0);
+    let last = keys
+        .last()
+        .and_then(|k| k.rsplit(' ').next())
+        .unwrap_or_default()
+        .to_string();
+    section.pack_start(
+        &row(
+            "Change speed",
+            &label(&format!("{first} to {last}"), &["dim-label"]),
+        ),
+        false,
+        false,
+        0,
+    );
     root.pack_start(&section, false, false, 0);
 
     // Playback speed, right under the record and play shortcuts.
     let speed_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let speed_value = label("", &["mkrr-heading"]);
     speed_box.pack_start(&row("Playback speed", &speed_value), false, false, 0);
-    let slider = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, speed::CUSTOM as f64, 1.0);
+    let slider =
+        gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, speed::CUSTOM as f64, 1.0);
     slider.set_draw_value(false);
     slider.set_digits(0);
     slider.set_round_digits(0);
@@ -281,7 +331,12 @@ fn build() -> Ui {
         commit(e);
         Propagation::Proceed
     });
-    for (button, which) in [(&record, Which::Record), (&play, Which::Play), (&repeat, Which::Loop), (&history, Which::History)] {
+    for (button, which) in [
+        (&record, Which::Record),
+        (&play, Which::Play),
+        (&repeat, Which::Loop),
+        (&history, Which::History),
+    ] {
         button.connect_clicked(move |b| {
             app::begin_capture(which);
             if let Some(w) = b.toplevel().and_then(|t| t.downcast::<gtk::Window>().ok()) {
@@ -294,15 +349,46 @@ fn build() -> Ui {
     notice.set_no_show_all(true);
     root.pack_start(&notice, false, false, 0);
 
-    root.pack_start(&label("During playback, move the mouse or press any key to take back control.", &["dim-label"]), false, false, 0);
+    let tip = label("", &["dim-label"]);
+    root.pack_start(&tip, false, false, 0);
 
     let toggles = gtk::Box::new(gtk::Orientation::Vertical, 8);
     let autostart = gtk::Switch::new();
     let auto_update = gtk::Switch::new();
     let random = gtk::Switch::new();
+    let stop_on_input = gtk::Switch::new();
+    let skip_moves = gtk::Switch::new();
     toggles.pack_start(&row("Start when I sign in", &autostart), false, false, 0);
-    toggles.pack_start(&row("Install updates automatically", &auto_update), false, false, 0);
-    toggles.pack_start(&row("Random timing (each press up to half a second early or late)", &random), false, false, 0);
+    toggles.pack_start(
+        &row("Install updates automatically", &auto_update),
+        false,
+        false,
+        0,
+    );
+    toggles.pack_start(
+        &row(
+            "Random timing (each press up to half a second early or late)",
+            &random,
+        ),
+        false,
+        false,
+        0,
+    );
+    toggles.pack_start(
+        &row("Stop on mouse or key input", &stop_on_input),
+        false,
+        false,
+        0,
+    );
+    toggles.pack_start(
+        &row(
+            "Ignore mouse movement (clicks and keys play at the pointer)",
+            &skip_moves,
+        ),
+        false,
+        false,
+        0,
+    );
     root.pack_start(&toggles, false, false, 0);
     autostart.connect_state_set(|_, on| {
         if !UPDATING.with(|f| f.get()) {
@@ -319,6 +405,18 @@ fn build() -> Ui {
     random.connect_state_set(|_, on| {
         if !UPDATING.with(|f| f.get()) {
             app::set_random_timing(on);
+        }
+        Propagation::Proceed
+    });
+    stop_on_input.connect_state_set(|_, on| {
+        if !UPDATING.with(|f| f.get()) {
+            app::set_stop_on_input(on);
+        }
+        Propagation::Proceed
+    });
+    skip_moves.connect_state_set(|_, on| {
+        if !UPDATING.with(|f| f.get()) {
+            app::set_skip_moves(on);
         }
         Propagation::Proceed
     });
@@ -374,12 +472,17 @@ fn build() -> Ui {
         autostart,
         auto_update,
         random,
+        stop_on_input,
+        skip_moves,
+        tip,
         update_text,
     }
 }
 
 fn on_key(ev: &gdk::EventKey) -> Propagation {
-    let Some(which) = CAPTURING.with(|c| c.get()) else { return Propagation::Proceed };
+    let Some(which) = CAPTURING.with(|c| c.get()) else {
+        return Propagation::Proceed;
+    };
     let state = ev.state();
     let mods = Mods {
         ctrl: state.contains(ModifierType::CONTROL_MASK),
@@ -403,9 +506,32 @@ fn on_key(ev: &gdk::EventKey) -> Propagation {
 /// without a stable name return None.
 fn evdev_code(c: u32) -> Option<String> {
     const LETTERS: [(u32, char); 26] = [
-        (30, 'A'), (48, 'B'), (46, 'C'), (32, 'D'), (18, 'E'), (33, 'F'), (34, 'G'), (35, 'H'), (23, 'I'),
-        (36, 'J'), (37, 'K'), (38, 'L'), (50, 'M'), (49, 'N'), (24, 'O'), (25, 'P'), (16, 'Q'), (19, 'R'),
-        (31, 'S'), (20, 'T'), (22, 'U'), (47, 'V'), (17, 'W'), (45, 'X'), (21, 'Y'), (44, 'Z'),
+        (30, 'A'),
+        (48, 'B'),
+        (46, 'C'),
+        (32, 'D'),
+        (18, 'E'),
+        (33, 'F'),
+        (34, 'G'),
+        (35, 'H'),
+        (23, 'I'),
+        (36, 'J'),
+        (37, 'K'),
+        (38, 'L'),
+        (50, 'M'),
+        (49, 'N'),
+        (24, 'O'),
+        (25, 'P'),
+        (16, 'Q'),
+        (19, 'R'),
+        (31, 'S'),
+        (20, 'T'),
+        (22, 'U'),
+        (47, 'V'),
+        (17, 'W'),
+        (45, 'X'),
+        (21, 'Y'),
+        (44, 'Z'),
     ];
     if let Some((_, l)) = LETTERS.iter().find(|(k, _)| *k == c) {
         return Some(format!("Key{l}"));

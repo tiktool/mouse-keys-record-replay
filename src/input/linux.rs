@@ -24,7 +24,9 @@ impl Drop for Hook {
         // With an empty event mask the server delivers this to the window's
         // creator, which is the listener thread blocked in wait_for_event.
         let msg = xproto::ClientMessageEvent::new(32, self.wake, 0u32, [0u32; 5]);
-        let _ = self.conn.send_event(false, self.wake, xproto::EventMask::NO_EVENT, msg);
+        let _ = self
+            .conn
+            .send_event(false, self.wake, xproto::EventMask::NO_EVENT, msg);
         let _ = self.conn.flush();
         if let Some(j) = self.join.take() {
             let _ = j.join();
@@ -44,7 +46,12 @@ pub fn start() -> Result<Hook, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let (c, s) = (conn.clone(), stop.clone());
     let join = std::thread::spawn(move || listen(&c, root, &xtest, &s));
-    Ok(Hook { conn, wake, stop, join: Some(join) })
+    Ok(Hook {
+        conn,
+        wake,
+        stop,
+        join: Some(join),
+    })
 }
 
 fn setup(conn: &RustConnection, root: Window) -> Res<(Window, Vec<u16>)> {
@@ -65,12 +72,28 @@ fn setup(conn: &RustConnection, root: Window) -> Res<(Window, Vec<u16>)> {
         | XIEventMask::RAW_BUTTON_PRESS
         | XIEventMask::RAW_BUTTON_RELEASE
         | XIEventMask::RAW_MOTION;
-    let masks = [xinput::EventMask { deviceid: Device::ALL.into(), mask: vec![mask] }];
+    let masks = [xinput::EventMask {
+        deviceid: Device::ALL.into(),
+        mask: vec![mask],
+    }];
     conn.xinput_xi_select_events(root, &masks)?.check()?;
     // Never mapped: it only exists so Drop has a target for the wake-up message.
     let wake = conn.generate_id()?;
     let aux = CreateWindowAux::new();
-    conn.create_window(0, wake, root, 0, 0, 1, 1, 0, WindowClass::INPUT_ONLY, 0, &aux)?.check()?;
+    conn.create_window(
+        0,
+        wake,
+        root,
+        0,
+        0,
+        1,
+        1,
+        0,
+        WindowClass::INPUT_ONLY,
+        0,
+        &aux,
+    )?
+    .check()?;
     Ok((wake, xtest))
 }
 
@@ -98,7 +121,12 @@ fn listen(conn: &RustConnection, root: Window, xtest: &[u16], stop: &AtomicBool)
         let ev = match event {
             Event::XinputRawKeyPress(e) | Event::XinputRawKeyRelease(e) => {
                 let down = e.event_type == xinput::RAW_KEY_PRESS_EVENT;
-                Ev::Key { code: e.detail, scan: 0, flags: 0, down }
+                Ev::Key {
+                    code: e.detail,
+                    scan: 0,
+                    flags: 0,
+                    down,
+                }
             }
             // Pointer-emulated wheel buttons are kept: smooth-scroll devices report
             // the wheel only as scroll valuators on RawMotion (which we turn into a
@@ -106,7 +134,13 @@ fn listen(conn: &RustConnection, root: Window, xtest: &[u16], stop: &AtomicBool)
             Event::XinputRawButtonPress(e) | Event::XinputRawButtonRelease(e) => {
                 let down = e.event_type == xinput::RAW_BUTTON_PRESS_EVENT;
                 let (x, y) = pointer();
-                Ev::Button { b: e.detail as u8, down, x, y, n: 1 }
+                Ev::Button {
+                    b: e.detail as u8,
+                    down,
+                    x,
+                    y,
+                    n: 1,
+                }
             }
             _ => {
                 let (x, y) = pointer();
@@ -142,18 +176,27 @@ fn with<R>(f: impl FnOnce(&Inject) -> Res<R>) -> Option<R> {
 pub fn inject(ev: &Ev, _buttons_down: u32) {
     with(|i| {
         let fake = |t: u8, detail: u8, x: i32, y: i32| {
-            i.conn.xtest_fake_input(t, detail, 0, i.root, x as i16, y as i16, 0).map(|_| ())
+            i.conn
+                .xtest_fake_input(t, detail, 0, i.root, x as i16, y as i16, 0)
+                .map(|_| ())
         };
         match *ev {
             Ev::Move { x, y } => fake(xproto::MOTION_NOTIFY_EVENT, 0, x, y)?,
             Ev::Button { b, down, x, y, .. } => {
                 fake(xproto::MOTION_NOTIFY_EVENT, 0, x, y)?;
-                let t =
-                    if down { xproto::BUTTON_PRESS_EVENT } else { xproto::BUTTON_RELEASE_EVENT };
+                let t = if down {
+                    xproto::BUTTON_PRESS_EVENT
+                } else {
+                    xproto::BUTTON_RELEASE_EVENT
+                };
                 fake(t, b, 0, 0)?;
             }
             Ev::Key { code, down, .. } => {
-                let t = if down { xproto::KEY_PRESS_EVENT } else { xproto::KEY_RELEASE_EVENT };
+                let t = if down {
+                    xproto::KEY_PRESS_EVENT
+                } else {
+                    xproto::KEY_RELEASE_EVENT
+                };
                 fake(t, code as u8, 0, 0)?;
             }
             Ev::Wheel { dx, dy } => {

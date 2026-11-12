@@ -97,7 +97,11 @@ fn tick() -> ControlFlow {
         let now = Instant::now();
         let dt = now.duration_since(s.last).as_secs_f64();
         s.last = now;
-        s.alpha = if s.visible { (s.alpha + dt / FADE_IN).min(1.0) } else { (s.alpha - dt / FADE_OUT).max(0.0) };
+        s.alpha = if s.visible {
+            (s.alpha + dt / FADE_IN).min(1.0)
+        } else {
+            (s.alpha - dt / FADE_OUT).max(0.0)
+        };
         let ease = 1.0 - (1.0 - s.alpha).powi(3);
         let pulsing = s.hud.as_ref().is_some_and(|h| h.kind == HudKind::Recording);
         for w in &s.windows {
@@ -123,10 +127,16 @@ fn tick() -> ControlFlow {
 }
 
 fn style() {
-    let Some(screen) = gdk::Screen::default() else { return };
+    let Some(screen) = gdk::Screen::default() else {
+        return;
+    };
     let provider = gtk::CssProvider::new();
     if provider.load_from_data(CSS.as_bytes()).is_ok() {
-        gtk::StyleContext::add_provider_for_screen(&screen, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        gtk::StyleContext::add_provider_for_screen(
+            &screen,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
 }
 
@@ -139,13 +149,20 @@ fn dark() -> bool {
     if let Some(c) = bg {
         return 0.2126 * c.red() + 0.7152 * c.green() + 0.0722 * c.blue() < 0.5;
     }
-    let Some(settings) = gtk::Settings::default() else { return false };
-    let theme = settings.gtk_theme_name().map(|t| t.to_lowercase()).unwrap_or_default();
+    let Some(settings) = gtk::Settings::default() else {
+        return false;
+    };
+    let theme = settings
+        .gtk_theme_name()
+        .map(|t| t.to_lowercase())
+        .unwrap_or_default();
     settings.is_gtk_application_prefer_dark_theme() || theme.contains("dark")
 }
 
 fn create(hud: &Hud, born: Instant, alpha: f64) -> Vec<gtk::Window> {
-    let Some(display) = gdk::Display::default() else { return Vec::new() };
+    let Some(display) = gdk::Display::default() else {
+        return Vec::new();
+    };
     let dark = dark();
     (0..display.n_monitors())
         .filter_map(|i| display.monitor(i))
@@ -181,8 +198,16 @@ fn window(hud: &Hud, area: &gdk::Rectangle, dark: bool, born: Instant, alpha: f6
     ctx.add_class(if dark { "dark" } else { "light" });
 
     let kind = hud.kind;
-    let card_color = if dark { (0.149, 0.149, 0.149) } else { (1.0, 1.0, 1.0) };
-    let green = if dark { (0.188, 0.820, 0.345) } else { (0.118, 0.620, 0.243) };
+    let card_color = if dark {
+        (0.149, 0.149, 0.149)
+    } else {
+        (1.0, 1.0, 1.0)
+    };
+    let green = if dark {
+        (0.188, 0.820, 0.345)
+    } else {
+        (0.118, 0.620, 0.243)
+    };
     let tint = if dark { 0.22 } else { 0.14 };
     let icon = gtk::DrawingArea::new();
     icon.set_size_request(ICON, ICON);
@@ -193,7 +218,10 @@ fn window(hud: &Hud, area: &gdk::Rectangle, dark: bool, born: Instant, alpha: f6
             HudKind::Looping => ACCENT,
             HudKind::Saved => green,
         };
-        let (cx, cy) = (area.allocated_width() as f64 / 2.0, area.allocated_height() as f64 / 2.0);
+        let (cx, cy) = (
+            area.allocated_width() as f64 / 2.0,
+            area.allocated_height() as f64 / 2.0,
+        );
         let phase = (born.elapsed().as_secs_f64() % PULSE) / PULSE;
         draw_icon(cr, kind, cx, cy, card_color, accent, tint, phase);
         Propagation::Stop
@@ -209,7 +237,11 @@ fn window(hud: &Hud, area: &gdk::Rectangle, dark: bool, born: Instant, alpha: f6
     let line = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     for (run, is_key) in &hud.line {
         let l = gtk::Label::new(Some(run));
-        l.style_context().add_class(if *is_key { "mkrr-hud-key" } else { "mkrr-hud-line" });
+        l.style_context().add_class(if *is_key {
+            "mkrr-hud-key"
+        } else {
+            "mkrr-hud-line"
+        });
         line.pack_start(&l, false, false, 0);
     }
     text.pack_start(&line, false, false, 0);
@@ -221,7 +253,10 @@ fn window(hud: &Hud, area: &gdk::Rectangle, dark: bool, born: Instant, alpha: f6
     let width = natural.width + 2 * SHADOW;
     let height = natural.height + 2 * SHADOW;
     w.set_default_size(width, height);
-    w.move_(area.x() + (area.width() - width) / 2, area.y() + TOP_GAP - SHADOW);
+    w.move_(
+        area.x() + (area.width() - width) / 2,
+        area.y() + TOP_GAP - SHADOW,
+    );
     w.set_opacity(1.0 - (1.0 - alpha).powi(3));
     w.connect_realize(|w| w.input_shape_combine_region(Some(&cairo::Region::create())));
     w.show_all();
@@ -240,7 +275,11 @@ fn draw_icon(
     phase: f64,
 ) {
     let mix = |a: f64, b: f64| a + (b - a) * tint;
-    cr.set_source_rgb(mix(card.0, accent.0), mix(card.1, accent.1), mix(card.2, accent.2));
+    cr.set_source_rgb(
+        mix(card.0, accent.0),
+        mix(card.1, accent.1),
+        mix(card.2, accent.2),
+    );
     cr.arc(cx, cy, 16.0, 0.0, 2.0 * PI);
     let _ = cr.fill();
     let (r, g, b) = accent;
@@ -261,7 +300,13 @@ fn draw_icon(
             for start in [200.0f64, 20.0] {
                 let sweep = 125.0;
                 cr.new_sub_path();
-                cr.arc(cx, cy, radius, start.to_radians(), (start + sweep).to_radians());
+                cr.arc(
+                    cx,
+                    cy,
+                    radius,
+                    start.to_radians(),
+                    (start + sweep).to_radians(),
+                );
                 let _ = cr.stroke();
                 let a = (start + sweep).to_radians();
                 let (px, py) = (cx + radius * a.cos(), cy + radius * a.sin());
@@ -269,8 +314,14 @@ fn draw_icon(
                 let (nx, ny) = (a.cos(), a.sin());
                 let s = 3.4;
                 cr.move_to(px + dx * s, py + dy * s);
-                cr.line_to(px + nx * s * 0.95 - dx * s * 0.25, py + ny * s * 0.95 - dy * s * 0.25);
-                cr.line_to(px - nx * s * 0.95 - dx * s * 0.25, py - ny * s * 0.95 - dy * s * 0.25);
+                cr.line_to(
+                    px + nx * s * 0.95 - dx * s * 0.25,
+                    py + ny * s * 0.95 - dy * s * 0.25,
+                );
+                cr.line_to(
+                    px - nx * s * 0.95 - dx * s * 0.25,
+                    py - ny * s * 0.95 - dy * s * 0.25,
+                );
                 cr.close_path();
                 let _ = cr.fill();
             }

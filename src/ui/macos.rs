@@ -9,9 +9,9 @@ use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSBox, NSBoxType, NSButton, NSColor, NSControl,
     NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSEventMask, NSEventModifierFlags,
-    NSEventType, NSFont, NSImage, NSLayoutConstraint, NSSlider, NSStackView, NSStackViewDistribution, NSStackViewGravity, NSSwitch,
-    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate,
-    NSWindowStyleMask,
+    NSEventType, NSFont, NSImage, NSLayoutConstraint, NSSlider, NSStackView,
+    NSStackViewDistribution, NSStackViewGravity, NSSwitch, NSTextField,
+    NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
 };
 use objc2_foundation::{NSInteger, NSNotification, NSObject, NSPoint, NSRect, NSSize, NSString};
 use std::cell::{Cell, RefCell};
@@ -36,6 +36,8 @@ const TAG_PERMISSION: NSInteger = 10;
 const TAG_SPEED: NSInteger = 11;
 const TAG_CUSTOM: NSInteger = 12;
 const TAG_HISTORY: NSInteger = 13;
+const TAG_STOP_ON_INPUT: NSInteger = 14;
+const TAG_SKIP_MOVES: NSInteger = 15;
 
 const KVK_ESCAPE: u16 = 53;
 
@@ -55,6 +57,9 @@ struct Ui {
     autostart: Retained<NSSwitch>,
     auto_update: Retained<NSSwitch>,
     random: Retained<NSSwitch>,
+    stop_on_input: Retained<NSSwitch>,
+    skip_moves: Retained<NSSwitch>,
+    tip: Retained<NSTextField>,
     speed: Retained<NSSlider>,
     speed_value: Retained<NSTextField>,
     custom: Retained<NSTextField>,
@@ -113,12 +118,14 @@ fn on_click(sender: &NSControl) {
         TAG_PLAY => app::begin_capture(Which::Play),
         TAG_LOOP => app::begin_capture(Which::Loop),
         TAG_HISTORY => app::begin_capture(Which::History),
-        TAG_AUTOSTART | TAG_AUTO_UPDATE | TAG_RANDOM => {
+        TAG_AUTOSTART | TAG_AUTO_UPDATE | TAG_RANDOM | TAG_STOP_ON_INPUT | TAG_SKIP_MOVES => {
             let state: NSInteger = unsafe { msg_send![sender, state] };
             let on = state == NSControlStateValueOn;
             match tag {
                 TAG_AUTOSTART => app::set_autostart(on),
                 TAG_AUTO_UPDATE => app::set_auto_update(on),
+                TAG_STOP_ON_INPUT => app::set_stop_on_input(on),
+                TAG_SKIP_MOVES => app::set_skip_moves(on),
                 _ => app::set_random_timing(on),
             }
         }
@@ -154,7 +161,9 @@ fn end_capture_on_focus_loss() {
 }
 
 pub fn open() {
-    let Some(mtm) = MainThreadMarker::new() else { return };
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
     let exists = UI.with(|u| u.borrow().is_some());
     if !exists {
         let ui = build(mtm);
@@ -203,14 +212,17 @@ pub fn refresh() {
 }
 
 fn apply(ui: &Ui, v: &View) {
-    ui.version.setStringValue(&NSString::from_str(&format!("Version {}", v.version)));
+    ui.version
+        .setStringValue(&NSString::from_str(&format!("Version {}", v.version)));
     ui.dot.setFillColor(&*match v.mode {
         Mode::Idle => NSColor::systemGrayColor(),
         Mode::Recording => NSColor::systemRedColor(),
         Mode::Playing => NSColor::controlAccentColor(),
     });
-    ui.status_title.setStringValue(&NSString::from_str(&v.status_title));
-    ui.status_detail.setStringValue(&NSString::from_str(&v.status_detail));
+    ui.status_title
+        .setStringValue(&NSString::from_str(&v.status_title));
+    ui.status_detail
+        .setStringValue(&NSString::from_str(&v.status_detail));
     ui.status_detail.setHidden(v.status_detail.is_empty());
 
     let shortcut_title = |which: Which, label: &str| {
@@ -220,10 +232,12 @@ fn apply(ui: &Ui, v: &View) {
             NSString::from_str(label)
         }
     };
-    ui.record.setTitle(&shortcut_title(Which::Record, &v.record));
+    ui.record
+        .setTitle(&shortcut_title(Which::Record, &v.record));
     ui.play.setTitle(&shortcut_title(Which::Play, &v.play));
     ui.repeat.setTitle(&shortcut_title(Which::Loop, &v.repeat));
-    ui.history.setTitle(&shortcut_title(Which::History, &v.history));
+    ui.history
+        .setTitle(&shortcut_title(Which::History, &v.history));
 
     match &v.notice {
         Some(n) => {
@@ -236,20 +250,49 @@ fn apply(ui: &Ui, v: &View) {
         }
         None => ui.notice.setHidden(true),
     }
-    ui.permission.setHidden(crate::input::missing_pane().is_none());
+    ui.permission
+        .setHidden(crate::input::missing_pane().is_none());
 
-    ui.autostart.setState(if v.autostart { NSControlStateValueOn } else { NSControlStateValueOff });
-    ui.auto_update.setState(if v.auto_update { NSControlStateValueOn } else { NSControlStateValueOff });
-    ui.random.setState(if v.random_timing { NSControlStateValueOn } else { NSControlStateValueOff });
+    ui.autostart.setState(if v.autostart {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    });
+    ui.auto_update.setState(if v.auto_update {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    });
+    ui.random.setState(if v.random_timing {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    });
+    ui.stop_on_input.setState(if v.stop_on_input {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    });
+    ui.skip_moves.setState(if v.skip_moves {
+        NSControlStateValueOn
+    } else {
+        NSControlStateValueOff
+    });
+    ui.tip.setStringValue(&NSString::from_str(&v.stop_hint));
 
     let step = v.speed_step.min(speed::CUSTOM);
     ui.speed.setIntegerValue(step as NSInteger);
-    ui.speed_value.setStringValue(&NSString::from_str(&speed::step_label(step, v.custom_speed)));
+    ui.speed_value
+        .setStringValue(&NSString::from_str(&speed::step_label(
+            step,
+            v.custom_speed,
+        )));
     let custom = step == speed::CUSTOM;
     ui.custom.setEnabled(custom);
     // Never overwrite what is being typed.
     if ui.custom.currentEditor().is_none() {
-        ui.custom.setStringValue(&NSString::from_str(&speed::custom_text(v.custom_speed)));
+        ui.custom
+            .setStringValue(&NSString::from_str(&speed::custom_text(v.custom_speed)));
     }
     match &v.speed_error {
         Some(e) => {
@@ -257,13 +300,19 @@ fn apply(ui: &Ui, v: &View) {
             ui.speed_hint.setTextColor(Some(&NSColor::systemRedColor()));
         }
         None => {
-            let hint = if custom { "Type 0.1 to 1000, then press Return." } else { "Changes apply at once, also mid-playback." };
+            let hint = if custom {
+                "Type 0.1 to 1000, then press Return."
+            } else {
+                "Changes apply at once, also mid-playback."
+            };
             ui.speed_hint.setStringValue(&NSString::from_str(hint));
-            ui.speed_hint.setTextColor(Some(&NSColor::secondaryLabelColor()));
+            ui.speed_hint
+                .setTextColor(Some(&NSColor::secondaryLabelColor()));
         }
     }
 
-    ui.update_text.setStringValue(&NSString::from_str(&v.update_text));
+    ui.update_text
+        .setStringValue(&NSString::from_str(&v.update_text));
     ui.update_text.setHidden(v.update_text.is_empty());
 }
 
@@ -293,7 +342,9 @@ fn remove_monitor() {
 
 /// Returns true when the event is consumed by shortcut capture.
 fn on_key(event: &NSEvent) -> bool {
-    let Some(which) = CAPTURE.get() else { return false };
+    let Some(which) = CAPTURE.get() else {
+        return false;
+    };
     if event.r#type() != NSEventType::KeyDown {
         return true;
     }
@@ -424,7 +475,8 @@ fn code_name(key: u16) -> Option<&'static str> {
 fn build(mtm: MainThreadMarker) -> Ui {
     let target = Target::new(mtm);
     let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(WIDTH, 520.0));
-    let style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable;
+    let style =
+        NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable;
     let window = unsafe {
         NSWindow::initWithContentRect_styleMask_backing_defer(
             NSWindow::alloc(mtm),
@@ -443,11 +495,23 @@ fn build(mtm: MainThreadMarker) -> Ui {
     let root = vstack(mtm, 14.0);
     content.addSubview(&root);
     pin(&root, &content, MARGIN);
-    root.widthAnchor().constraintEqualToConstant(INNER).setActive(true);
+    root.widthAnchor()
+        .constraintEqualToConstant(INNER)
+        .setActive(true);
 
     // Header
-    let title = label(mtm, "Mouse Keys Record Replay", &NSFont::boldSystemFontOfSize(20.0), None);
-    let version = label(mtm, "", &NSFont::systemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::secondaryLabelColor()));
+    let title = label(
+        mtm,
+        "Mouse Keys Record Replay",
+        &NSFont::boldSystemFontOfSize(20.0),
+        None,
+    );
+    let version = label(
+        mtm,
+        "",
+        &NSFont::systemFontOfSize(NSFont::systemFontSize()),
+        Some(&NSColor::secondaryLabelColor()),
+    );
     let header = vstack(mtm, 2.0);
     header.addArrangedSubview(&title);
     header.addArrangedSubview(&version);
@@ -461,10 +525,24 @@ fn build(mtm: MainThreadMarker) -> Ui {
     dot.setBorderWidth(0.0);
     dot.setCornerRadius(DOT / 2.0);
     dot.setTranslatesAutoresizingMaskIntoConstraints(false);
-    dot.widthAnchor().constraintEqualToConstant(DOT).setActive(true);
-    dot.heightAnchor().constraintEqualToConstant(DOT).setActive(true);
-    let status_title = label(mtm, "", &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()), None);
-    let status_detail = wrapping(mtm, "", INNER - 2.0 * BOX_PAD - DOT - 10.0, NSFont::systemFontSize());
+    dot.widthAnchor()
+        .constraintEqualToConstant(DOT)
+        .setActive(true);
+    dot.heightAnchor()
+        .constraintEqualToConstant(DOT)
+        .setActive(true);
+    let status_title = label(
+        mtm,
+        "",
+        &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()),
+        None,
+    );
+    let status_detail = wrapping(
+        mtm,
+        "",
+        INNER - 2.0 * BOX_PAD - DOT - 10.0,
+        NSFont::systemFontSize(),
+    );
     let title_row = hstack(mtm, 8.0);
     title_row.addArrangedSubview(&dot);
     title_row.addArrangedSubview(&status_title);
@@ -477,7 +555,12 @@ fn build(mtm: MainThreadMarker) -> Ui {
     fill_width(&status_box, &root);
 
     // Shortcuts
-    let section = label(mtm, "Shortcuts", &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()), None);
+    let section = label(
+        mtm,
+        "Shortcuts",
+        &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()),
+        None,
+    );
     root.addArrangedSubview(&section);
     root.setCustomSpacing_afterView(8.0, &section);
     let record = button(mtm, &target, "", TAG_RECORD);
@@ -485,28 +568,75 @@ fn build(mtm: MainThreadMarker) -> Ui {
     let repeat = button(mtm, &target, "", TAG_LOOP);
     let history = button(mtm, &target, "", TAG_HISTORY);
     for b in [&record, &play, &repeat, &history] {
-        b.widthAnchor().constraintGreaterThanOrEqualToConstant(180.0).setActive(true);
+        b.widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(180.0)
+            .setActive(true);
     }
     let shortcuts = vstack(mtm, 8.0);
-    for (text, b) in [("Record / stop recording", &record), ("Play once / stop playback", &play), ("Loop / stop loop", &repeat), ("Open recordings", &history)] {
-        let row = row(mtm, &label(mtm, text, &NSFont::systemFontOfSize(NSFont::systemFontSize()), None), b);
+    for (text, b) in [
+        ("Record / stop recording", &record),
+        ("Play once / stop playback", &play),
+        ("Loop / stop loop", &repeat),
+        ("Open recordings", &history),
+    ] {
+        let row = row(
+            mtm,
+            &label(
+                mtm,
+                text,
+                &NSFont::systemFontOfSize(NSFont::systemFontSize()),
+                None,
+            ),
+            b,
+        );
         shortcuts.addArrangedSubview(&row);
         fill_width(&row, &shortcuts);
     }
     // The speed shortcuts are fixed, so they are listed as text.
     let keys: Vec<String> = app::view().map(|v| v.speed_keys).unwrap_or_default();
     let first = keys.first().cloned().unwrap_or_default();
-    let last = keys.last().map(|k| k.chars().skip_while(|c| !c.is_ascii_alphanumeric()).collect::<String>()).unwrap_or_default();
-    let speed_keys = label(mtm, &format!("{first} to {last}"), &NSFont::systemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::secondaryLabelColor()));
-    let speed_keys_row = row(mtm, &label(mtm, "Change speed", &NSFont::systemFontOfSize(NSFont::systemFontSize()), None), &speed_keys);
+    let last = keys
+        .last()
+        .map(|k| {
+            k.chars()
+                .skip_while(|c| !c.is_ascii_alphanumeric())
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    let speed_keys = label(
+        mtm,
+        &format!("{first} to {last}"),
+        &NSFont::systemFontOfSize(NSFont::systemFontSize()),
+        Some(&NSColor::secondaryLabelColor()),
+    );
+    let speed_keys_row = row(
+        mtm,
+        &label(
+            mtm,
+            "Change speed",
+            &NSFont::systemFontOfSize(NSFont::systemFontSize()),
+            None,
+        ),
+        &speed_keys,
+    );
     shortcuts.addArrangedSubview(&speed_keys_row);
     fill_width(&speed_keys_row, &shortcuts);
     root.addArrangedSubview(&shortcuts);
     fill_width(&shortcuts, &root);
 
     // Playback speed, right under the record and play shortcuts.
-    let speed_title = label(mtm, "Playback speed", &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()), None);
-    let speed_value = label(mtm, "", &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::controlAccentColor()));
+    let speed_title = label(
+        mtm,
+        "Playback speed",
+        &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()),
+        None,
+    );
+    let speed_value = label(
+        mtm,
+        "",
+        &NSFont::boldSystemFontOfSize(NSFont::systemFontSize()),
+        Some(&NSColor::controlAccentColor()),
+    );
     let speed_head = row(mtm, &speed_title, &speed_value);
     root.addArrangedSubview(&speed_head);
     fill_width(&speed_head, &root);
@@ -533,24 +663,43 @@ fn build(mtm: MainThreadMarker) -> Ui {
         custom.setAction(Some(sel!(clicked:)));
     }
     custom.setTranslatesAutoresizingMaskIntoConstraints(false);
-    custom.widthAnchor().constraintEqualToConstant(72.0).setActive(true);
-    let custom_x = label(mtm, "x", &NSFont::systemFontOfSize(NSFont::systemFontSize()), Some(&NSColor::secondaryLabelColor()));
+    custom
+        .widthAnchor()
+        .constraintEqualToConstant(72.0)
+        .setActive(true);
+    let custom_x = label(
+        mtm,
+        "x",
+        &NSFont::systemFontOfSize(NSFont::systemFontSize()),
+        Some(&NSColor::secondaryLabelColor()),
+    );
     let slider_row = hstack(mtm, 6.0);
     slider_row.addView_inGravity(&slider, NSStackViewGravity::Leading);
     slider_row.addView_inGravity(&custom, NSStackViewGravity::Trailing);
     slider_row.addView_inGravity(&custom_x, NSStackViewGravity::Trailing);
     root.addArrangedSubview(&slider_row);
     fill_width(&slider_row, &root);
-    slider.widthAnchor().constraintEqualToConstant(INNER - 72.0 - 30.0).setActive(true);
+    slider
+        .widthAnchor()
+        .constraintEqualToConstant(INNER - 72.0 - 30.0)
+        .setActive(true);
     root.setCustomSpacing_afterView(2.0, &slider_row);
     // Tick labels spread over the slider width so each sits under its stop.
     let ticks = hstack(mtm, 0.0);
     ticks.setDistribution(NSStackViewDistribution::EqualSpacing);
     for l in speed::LABELS {
-        ticks.addArrangedSubview(&label(mtm, l, &NSFont::systemFontOfSize(NSFont::smallSystemFontSize()), Some(&NSColor::secondaryLabelColor())));
+        ticks.addArrangedSubview(&label(
+            mtm,
+            l,
+            &NSFont::systemFontOfSize(NSFont::smallSystemFontSize()),
+            Some(&NSColor::secondaryLabelColor()),
+        ));
     }
     root.addArrangedSubview(&ticks);
-    ticks.widthAnchor().constraintEqualToConstant(INNER - 72.0 - 30.0).setActive(true);
+    ticks
+        .widthAnchor()
+        .constraintEqualToConstant(INNER - 72.0 - 30.0)
+        .setActive(true);
     let speed_hint = wrapping(mtm, "", INNER, NSFont::smallSystemFontSize());
     root.addArrangedSubview(&speed_hint);
 
@@ -562,16 +711,39 @@ fn build(mtm: MainThreadMarker) -> Ui {
     permission.setHidden(true);
     root.addArrangedSubview(&permission);
 
-    let tip = wrapping(mtm, "During playback, move the mouse or press any key to take back control.", INNER, NSFont::smallSystemFontSize());
+    let tip = wrapping(mtm, "", INNER, NSFont::smallSystemFontSize());
     root.addArrangedSubview(&tip);
 
     // Options
     let autostart = switch(mtm, &target, TAG_AUTOSTART);
     let auto_update = switch(mtm, &target, TAG_AUTO_UPDATE);
     let random = switch(mtm, &target, TAG_RANDOM);
+    let stop_on_input = switch(mtm, &target, TAG_STOP_ON_INPUT);
+    let skip_moves = switch(mtm, &target, TAG_SKIP_MOVES);
     let options = vstack(mtm, 10.0);
-    for (text, s) in [("Start when I log in", &autostart), ("Install updates automatically", &auto_update), ("Random timing (each press up to half a second early or late)", &random)] {
-        let row = row(mtm, &label(mtm, text, &NSFont::systemFontOfSize(NSFont::systemFontSize()), None), s);
+    for (text, s) in [
+        ("Start when I log in", &autostart),
+        ("Install updates automatically", &auto_update),
+        (
+            "Random timing (each press up to half a second early or late)",
+            &random,
+        ),
+        ("Stop on mouse or key input", &stop_on_input),
+        (
+            "Ignore mouse movement (clicks and keys play at the pointer)",
+            &skip_moves,
+        ),
+    ] {
+        let row = row(
+            mtm,
+            &label(
+                mtm,
+                text,
+                &NSFont::systemFontOfSize(NSFont::systemFontSize()),
+                None,
+            ),
+            s,
+        );
         options.addArrangedSubview(&row);
         fill_width(&row, &options);
     }
@@ -582,7 +754,10 @@ fn build(mtm: MainThreadMarker) -> Ui {
     let reset = button(mtm, &target, "Reset to defaults", TAG_RESET);
     let check = button(mtm, &target, "Check for updates", TAG_CHECK);
     let star = button(mtm, &target, "Star on GitHub", TAG_STAR);
-    if let Some(img) = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str("star"), None) {
+    if let Some(img) = NSImage::imageWithSystemSymbolName_accessibilityDescription(
+        &NSString::from_str("star"),
+        None,
+    ) {
         star.setImage(Some(&img));
         star.setImagePosition(objc2_app_kit::NSCellImagePosition::ImageLeading);
     }
@@ -617,6 +792,9 @@ fn build(mtm: MainThreadMarker) -> Ui {
         autostart,
         auto_update,
         random,
+        stop_on_input,
+        skip_moves,
+        tip,
         speed: slider,
         speed_value,
         custom,
@@ -664,7 +842,12 @@ fn card(mtm: MainThreadMarker) -> Retained<NSBox> {
     b
 }
 
-fn label(mtm: MainThreadMarker, text: &str, font: &NSFont, color: Option<&NSColor>) -> Retained<NSTextField> {
+fn label(
+    mtm: MainThreadMarker,
+    text: &str,
+    font: &NSFont,
+    color: Option<&NSColor>,
+) -> Retained<NSTextField> {
     let l = NSTextField::labelWithString(&NSString::from_str(text), mtm);
     l.setFont(Some(font));
     if let Some(c) = color {
@@ -682,9 +865,19 @@ fn wrapping(mtm: MainThreadMarker, text: &str, width: f64, size: f64) -> Retaine
     l
 }
 
-fn button(mtm: MainThreadMarker, target: &Target, title: &str, tag: NSInteger) -> Retained<NSButton> {
+fn button(
+    mtm: MainThreadMarker,
+    target: &Target,
+    title: &str,
+    tag: NSInteger,
+) -> Retained<NSButton> {
     let b = unsafe {
-        NSButton::buttonWithTitle_target_action(&NSString::from_str(title), Some(target), Some(sel!(clicked:)), mtm)
+        NSButton::buttonWithTitle_target_action(
+            &NSString::from_str(title),
+            Some(target),
+            Some(sel!(clicked:)),
+            mtm,
+        )
     };
     b.setTag(tag);
     b
@@ -702,10 +895,18 @@ fn switch(mtm: MainThreadMarker, target: &Target, tag: NSInteger) -> Retained<NS
 
 fn pin(child: &NSView, parent: &NSView, inset: f64) {
     let constraints = [
-        child.topAnchor().constraintEqualToAnchor_constant(&parent.topAnchor(), inset),
-        child.leadingAnchor().constraintEqualToAnchor_constant(&parent.leadingAnchor(), inset),
-        parent.trailingAnchor().constraintEqualToAnchor_constant(&child.trailingAnchor(), inset),
-        parent.bottomAnchor().constraintEqualToAnchor_constant(&child.bottomAnchor(), inset),
+        child
+            .topAnchor()
+            .constraintEqualToAnchor_constant(&parent.topAnchor(), inset),
+        child
+            .leadingAnchor()
+            .constraintEqualToAnchor_constant(&parent.leadingAnchor(), inset),
+        parent
+            .trailingAnchor()
+            .constraintEqualToAnchor_constant(&child.trailingAnchor(), inset),
+        parent
+            .bottomAnchor()
+            .constraintEqualToAnchor_constant(&child.bottomAnchor(), inset),
     ];
     for c in constraints {
         c.setActive(true);
@@ -713,6 +914,8 @@ fn pin(child: &NSView, parent: &NSView, inset: f64) {
 }
 
 fn fill_width(child: &NSView, parent: &NSView) {
-    let c: Retained<NSLayoutConstraint> = child.widthAnchor().constraintEqualToAnchor(&parent.widthAnchor());
+    let c: Retained<NSLayoutConstraint> = child
+        .widthAnchor()
+        .constraintEqualToAnchor(&parent.widthAnchor());
     c.setActive(true);
 }

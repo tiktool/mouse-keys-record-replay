@@ -29,6 +29,8 @@ pub enum StopBy {
 struct Rec {
     start: Instant,
     steps: Vec<Step>,
+    /// Pointer movement is left out of this recording.
+    skip_moves: bool,
 }
 
 static MODE: AtomicU8 = AtomicU8::new(0);
@@ -36,9 +38,16 @@ static ABORT: AtomicBool = AtomicBool::new(false);
 static STARTING: AtomicBool = AtomicBool::new(false);
 static LOOPING: AtomicBool = AtomicBool::new(false);
 static RANDOM: AtomicBool = AtomicBool::new(false);
+static STOP_ON_INPUT: AtomicBool = AtomicBool::new(true);
+static SKIP_MOVES: AtomicBool = AtomicBool::new(false);
+/// The saved recording holds no pointer movement: see `free_cursor`.
+static FREE: AtomicBool = AtomicBool::new(false);
 /// Playback speed as f64 bits; 1.0 by default.
 static SPEED: AtomicU64 = AtomicU64::new(0x3FF0_0000_0000_0000);
-static CHORD: Mutex<ChordGate> = Mutex::new(ChordGate { held: Vec::new(), used: false });
+static CHORD: Mutex<ChordGate> = Mutex::new(ChordGate {
+    held: Vec::new(),
+    used: false,
+});
 static REC: Mutex<Option<Rec>> = Mutex::new(None);
 static MACRO: Mutex<Vec<Step>> = Mutex::new(Vec::new());
 static HOOK: Mutex<Option<input::Hook>> = Mutex::new(None);
@@ -67,7 +76,7 @@ pub fn init(
     notify: impl Fn(Option<String>) + Send + Sync + 'static,
     save: impl Fn(Vec<Step>) + Send + Sync + 'static,
 ) {
-    *MACRO.lock().unwrap() = saved;
+    set_macro(saved);
     let _ = NOTIFY.set(Box::new(notify));
     let _ = SAVE.set(Box::new(save));
 }
@@ -105,13 +114,21 @@ pub fn on_input(ev: Ev, injected: bool) {
     match mode() {
         Mode::Recording => {
             if let Some(r) = REC.lock().unwrap().as_mut() {
+                if r.skip_moves && matches!(ev, Ev::Move { .. }) {
+                    return;
+                }
                 let t = r.start.elapsed().as_micros() as u64;
                 r.steps.push(Step { t, ev });
             }
         }
         Mode::Playing => {
+            if !input_stops() {
+                return;
+            }
             let stop = match ev {
-                Ev::Key { code, down, .. } if input::speed_chord_key(code) => CHORD.lock().unwrap().key(code, down),
+                Ev::Key { code, down, .. } if input::speed_chord_key(code) => {
+                    CHORD.lock().unwrap().key(code, down)
+                }
                 _ => true,
             };
             if stop {
@@ -125,7 +142,7 @@ pub fn on_input(ev: Ev, injected: bool) {
 /// Lets the speed shortcuts change speed during playback without stopping
 /// it. Their modifier and F keys are held back while pressed; once all are up
 /// playback stops unless a speed shortcut fired in between. Every other key
-/// and any mouse input still stops playback at once.
+/// and any mouse input stops playback at once while `input_stops` holds.
 struct ChordGate {
     held: Vec<u32>,
     used: bool,
@@ -200,8 +217,34 @@ pub fn set_recording(steps: Vec<Step>) -> bool {
     if mode() != Mode::Idle {
         return false;
     }
-    *MACRO.lock().unwrap() = steps;
+    set_macro(steps);
     true
+}
+
+/// A recording with no pointer movement plays at the pointer, wherever the
+/// user has it, and the user's own input does not stop it.
+fn free_cursor(steps: &[Step]) -> bool {
+    !steps.is_empty() && !steps.iter().any(|s| matches!(s.ev, Ev::Move { .. }))
+}
+
+fn set_macro(steps: Vec<Step>) {
+    FREE.store(free_cursor(&steps), SeqCst);
+    *MACRO.lock().unwrap() = steps;
+}
+
+/// True when moving the mouse or pressing a key stops playback of the saved
+/// recording. False leaves the shortcuts and the tray menu as the only stop.
+pub fn input_stops() -> bool {
+    STOP_ON_INPUT.load(SeqCst) && !FREE.load(SeqCst)
+}
+
+pub fn set_stop_on_input(on: bool) {
+    STOP_ON_INPUT.store(on, SeqCst);
+}
+
+/// Read when a recording starts.
+pub fn set_skip_moves(on: bool) {
+    SKIP_MOVES.store(on, SeqCst);
 }
 
 /// Read at the start of every pass, so a change applies to the next loop.
@@ -232,7 +275,11 @@ impl Rng {
     fn offset(&mut self) -> i64 {
         let r = self.next();
         let size = JITTER_MIN + ((r >> 1) % (JITTER_MAX - JITTER_MIN + 1) as u64) as i64;
-        if r & 1 == 0 { size } else { -size }
+        if r & 1 == 0 {
+            size
+        } else {
+            -size
+        }
     }
 }
 
@@ -249,14 +296,18 @@ fn jitter(steps: &[Step], rng: &mut Rng) -> Vec<Step> {
     for (i, s) in steps.iter().enumerate() {
         let t = s.t as i64;
         let press = match s.ev {
-            Ev::Key { code, down: true, .. } => {
+            Ev::Key {
+                code, down: true, ..
+            } => {
                 let fresh = !held.contains(&code);
                 if fresh {
                     held.push(code);
                 }
                 fresh
             }
-            Ev::Key { code, down: false, .. } => {
+            Ev::Key {
+                code, down: false, ..
+            } => {
                 held.retain(|&k| k != code);
                 false
             }
@@ -268,7 +319,10 @@ fn jitter(steps: &[Step], rng: &mut Rng) -> Vec<Step> {
         }
         let nt = (t + shift).max(last);
         last = nt;
-        out.push(Step { t: nt as u64, ev: s.ev });
+        out.push(Step {
+            t: nt as u64,
+            ev: s.ev,
+        });
     }
     out
 }
@@ -305,10 +359,20 @@ pub fn start_recording() {
             return;
         }
         wait_release();
-        let (x, y) = input::cursor_pos();
+        let skip_moves = SKIP_MOVES.load(SeqCst);
+        let steps = if skip_moves {
+            Vec::new()
+        } else {
+            let (x, y) = input::cursor_pos();
+            vec![Step {
+                t: 0,
+                ev: Ev::Move { x, y },
+            }]
+        };
         *REC.lock().unwrap() = Some(Rec {
             start: Instant::now(),
-            steps: vec![Step { t: 0, ev: Ev::Move { x, y } }],
+            steps,
+            skip_moves,
         });
         set_mode(Mode::Recording);
         match input::start() {
@@ -344,7 +408,7 @@ pub fn stop_recording(by: StopBy, tray_hit: &dyn Fn(i32, i32) -> bool) {
     }
     drop_orphans(&mut steps);
     if steps.len() > 1 {
-        *MACRO.lock().unwrap() = steps.clone();
+        set_macro(steps.clone());
         if let Some(save) = SAVE.get() {
             save(steps);
         }
@@ -359,7 +423,9 @@ pub fn trim_chord(steps: &mut Vec<Step>, chord: usize) {
     let mut cut = steps.len();
     for (i, s) in steps.iter().enumerate().rev() {
         match s.ev {
-            Ev::Key { code, down: true, .. } => {
+            Ev::Key {
+                code, down: true, ..
+            } => {
                 if !seen.contains(&code) {
                     seen.push(code);
                 }
@@ -433,10 +499,7 @@ pub fn drop_orphans(steps: &mut Vec<Step>) {
 /// Plays the saved recording once, or again and again until the user takes
 /// back control when `repeat` is set.
 pub fn play(repeat: bool) {
-    if MODE
-        .compare_exchange(0, 2, SeqCst, SeqCst)
-        .is_err()
-    {
+    if MODE.compare_exchange(0, 2, SeqCst, SeqCst).is_err() {
         return;
     }
     let steps = MACRO.lock().unwrap().clone();
@@ -468,7 +531,11 @@ pub fn play(repeat: bool) {
         let mut rng = Rng::seeded();
         let interrupted = loop {
             let pass = Instant::now();
-            let done = if RANDOM.load(SeqCst) { run(&jitter(&steps, &mut rng)) } else { run(&steps) };
+            let done = if RANDOM.load(SeqCst) {
+                run(&jitter(&steps, &mut rng))
+            } else {
+                run(&steps)
+            };
             if done {
                 break true;
             }
@@ -499,7 +566,10 @@ struct Clock {
 
 impl Clock {
     fn new(now: Instant) -> Clock {
-        Clock { pos: 0.0, last: now }
+        Clock {
+            pos: 0.0,
+            last: now,
+        }
     }
 
     fn advance(&mut self, now: Instant, speed: f64) {
@@ -540,6 +610,7 @@ fn sleep_until(until: Instant) -> bool {
 /// true when the user interrupted. Every key and button still held is
 /// released on the way out.
 fn run(steps: &[Step]) -> bool {
+    let free = free_cursor(steps);
     let mut clock = Clock::new(Instant::now());
     let mut held: Vec<Ev> = Vec::new();
     let mut pressed: Vec<(u64, Instant)> = Vec::new();
@@ -587,21 +658,53 @@ fn run(steps: &[Step]) -> bool {
             }
             _ => {}
         }
-        input::inject(&s.ev, buttons);
+        input::inject(&at_pointer(s.ev, free, input::cursor_pos), buttons);
     }
     for h in held.iter().rev() {
-        if let Ev::Key { code, scan, flags, .. } = *h {
-            input::inject(&Ev::Key { code, scan, flags, down: false }, buttons);
+        if let Ev::Key {
+            code, scan, flags, ..
+        } = *h
+        {
+            input::inject(
+                &Ev::Key {
+                    code,
+                    scan,
+                    flags,
+                    down: false,
+                },
+                buttons,
+            );
         }
     }
     let (x, y) = input::cursor_pos();
     for b in 1..=5u8 {
         if buttons & (1 << b) != 0 {
             buttons &= !(1 << b);
-            input::inject(&Ev::Button { b, down: false, x, y, n: 1 }, buttons);
+            input::inject(
+                &Ev::Button {
+                    b,
+                    down: false,
+                    x,
+                    y,
+                    n: 1,
+                },
+                buttons,
+            );
         }
     }
     interrupted
+}
+
+/// In a recording without pointer movement a click lands where the pointer
+/// is now, not where it was recorded.
+fn at_pointer(ev: Ev, free: bool, pos: impl Fn() -> (i32, i32)) -> Ev {
+    match ev {
+        Ev::Button { b, down, n, .. } if free => {
+            let (x, y) = pos();
+            Ev::Button { b, down, x, y, n }
+        }
+        e => e,
+    }
 }
 
 pub fn stop_playing() {
@@ -649,7 +752,8 @@ pub fn shutdown() {
     set_mode(Mode::Idle);
     drop(HOOK.lock().unwrap().take());
     let t0 = Instant::now();
-    while t0.elapsed() < Duration::from_millis(300) && ABORT.load(SeqCst) && mode() == Mode::Playing {
+    while t0.elapsed() < Duration::from_millis(300) && ABORT.load(SeqCst) && mode() == Mode::Playing
+    {
         thread::sleep(Duration::from_millis(5));
     }
 }
@@ -663,18 +767,48 @@ mod tests {
     use super::*;
 
     fn key(code: u32, down: bool) -> Step {
-        Step { t: 0, ev: Ev::Key { code, scan: 0, flags: 0, down } }
+        Step {
+            t: 0,
+            ev: Ev::Key {
+                code,
+                scan: 0,
+                flags: 0,
+                down,
+            },
+        }
     }
     fn mv() -> Step {
-        Step { t: 0, ev: Ev::Move { x: 1, y: 1 } }
+        Step {
+            t: 0,
+            ev: Ev::Move { x: 1, y: 1 },
+        }
     }
     fn btn(down: bool, x: i32) -> Step {
-        Step { t: 0, ev: Ev::Button { b: 1, down, x, y: 0, n: 1 } }
+        Step {
+            t: 0,
+            ev: Ev::Button {
+                b: 1,
+                down,
+                x,
+                y: 0,
+                n: 1,
+            },
+        }
     }
 
     #[test]
     fn trims_stop_chord_with_autorepeat_and_moves() {
-        let mut s = vec![mv(), key(65, true), key(65, false), key(17, true), mv(), key(18, true), key(16, true), key(16, true), key(112, true)];
+        let mut s = vec![
+            mv(),
+            key(65, true),
+            key(65, false),
+            key(17, true),
+            mv(),
+            key(18, true),
+            key(16, true),
+            key(16, true),
+            key(112, true),
+        ];
         trim_chord(&mut s, 4);
         assert_eq!(s, vec![mv(), key(65, true), key(65, false)]);
     }
@@ -688,14 +822,28 @@ mod tests {
 
     #[test]
     fn drops_orphan_releases() {
-        let mut s = vec![mv(), key(17, false), btn(false, 0), key(65, true), key(65, false)];
+        let mut s = vec![
+            mv(),
+            key(17, false),
+            btn(false, 0),
+            key(65, true),
+            key(65, false),
+        ];
         drop_orphans(&mut s);
         assert_eq!(s, vec![mv(), key(65, true), key(65, false)]);
     }
 
     #[test]
     fn menu_trim_cuts_at_tray_click() {
-        let mut s = vec![mv(), btn(true, 10), btn(false, 10), btn(true, 900), btn(false, 900), btn(true, 880), btn(false, 880)];
+        let mut s = vec![
+            mv(),
+            btn(true, 10),
+            btn(false, 10),
+            btn(true, 900),
+            btn(false, 900),
+            btn(true, 880),
+            btn(false, 880),
+        ];
         trim_menu(&mut s, &|x, _| x == 900);
         assert_eq!(s.len(), 3);
     }
@@ -743,7 +891,11 @@ mod tests {
             late |= o > 0;
         }
         assert!(early && late);
-        let src = vec![at(0, mv()), at(5_000_000, key(65, true)), at(5_050_000, key(65, false))];
+        let src = vec![
+            at(0, mv()),
+            at(5_000_000, key(65, true)),
+            at(5_050_000, key(65, false)),
+        ];
         for _ in 0..1_000 {
             let out = jitter(&src, &mut rng);
             let d = (out[1].t as i64 - 5_000_000).abs();
@@ -753,7 +905,13 @@ mod tests {
 
     #[test]
     fn random_timing_keeps_key_repeat_with_its_press() {
-        let src = vec![at(0, mv()), at(1_000_000, key(65, true)), at(1_500_000, key(65, true)), at(1_530_000, key(65, true)), at(1_600_000, key(65, false))];
+        let src = vec![
+            at(0, mv()),
+            at(1_000_000, key(65, true)),
+            at(1_500_000, key(65, true)),
+            at(1_530_000, key(65, true)),
+            at(1_600_000, key(65, false)),
+        ];
         let mut rng = Rng(4242);
         for _ in 0..500 {
             let out = jitter(&src, &mut rng);
@@ -763,8 +921,23 @@ mod tests {
 
     #[test]
     fn random_timing_keeps_double_click_together() {
-        let dbl = Step { t: 0, ev: Ev::Button { b: 1, down: true, x: 10, y: 0, n: 2 } };
-        let src = vec![at(0, mv()), at(2_000_000, btn(true, 10)), at(2_050_000, btn(false, 10)), at(2_150_000, dbl), at(2_200_000, btn(false, 10))];
+        let dbl = Step {
+            t: 0,
+            ev: Ev::Button {
+                b: 1,
+                down: true,
+                x: 10,
+                y: 0,
+                n: 2,
+            },
+        };
+        let src = vec![
+            at(0, mv()),
+            at(2_000_000, btn(true, 10)),
+            at(2_050_000, btn(false, 10)),
+            at(2_150_000, dbl),
+            at(2_200_000, btn(false, 10)),
+        ];
         let mut rng = Rng(777);
         for _ in 0..500 {
             let out = jitter(&src, &mut rng);
@@ -774,7 +947,15 @@ mod tests {
 
     #[test]
     fn menu_trim_falls_back_to_last_two_clicks() {
-        let mut s = vec![mv(), btn(true, 10), btn(false, 10), btn(true, 900), btn(false, 900), btn(true, 880), btn(false, 880)];
+        let mut s = vec![
+            mv(),
+            btn(true, 10),
+            btn(false, 10),
+            btn(true, 900),
+            btn(false, 900),
+            btn(true, 880),
+            btn(false, 880),
+        ];
         trim_menu(&mut s, &|_, _| false);
         assert_eq!(s.len(), 3);
     }
@@ -837,7 +1018,10 @@ mod tests {
 
     #[test]
     fn chord_gate_keeps_playing_through_a_speed_shortcut() {
-        let mut g = ChordGate { held: Vec::new(), used: false };
+        let mut g = ChordGate {
+            held: Vec::new(),
+            used: false,
+        };
         assert!(!g.key(17, true));
         assert!(!g.key(18, true));
         assert!(!g.key(118, true));
@@ -851,6 +1035,25 @@ mod tests {
         g.used = true;
         g.reset();
         assert!(g.held.is_empty() && !g.used);
+    }
+
+    #[test]
+    fn recording_without_moves_plays_at_the_pointer() {
+        let free = vec![btn(true, 10), btn(false, 10), key(65, true)];
+        assert!(free_cursor(&free));
+        assert!(!free_cursor(&[mv(), btn(true, 10)]));
+        assert!(!free_cursor(&[]));
+        let here = || (700, 300);
+        let moved = Ev::Button {
+            b: 1,
+            down: true,
+            x: 700,
+            y: 300,
+            n: 1,
+        };
+        assert_eq!(at_pointer(btn(true, 10).ev, true, here), moved);
+        assert_eq!(at_pointer(btn(true, 10).ev, false, here), btn(true, 10).ev);
+        assert_eq!(at_pointer(key(65, true).ev, true, here), key(65, true).ev);
     }
 
     #[test]

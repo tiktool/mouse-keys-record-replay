@@ -10,17 +10,20 @@ use std::time::Instant;
 use windows_sys::core::BOOL;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW, EnumDisplayMonitors, GdiFlush, GetMonitorInfoW,
-    GetTextExtentPoint32W, SelectObject, SetBkMode, SetTextCharacterExtra, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, BLENDFUNCTION, CLEARTYPE_QUALITY, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
-    HDC, HFONT, HMONITOR, MONITORINFO, TRANSPARENT,
+    CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteDC, DeleteObject, DrawTextW,
+    EnumDisplayMonitors, GdiFlush, GetMonitorInfoW, GetTextExtentPoint32W, SelectObject, SetBkMode,
+    SetTextCharacterExtra, SetTextColor, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, BLENDFUNCTION, CLEARTYPE_QUALITY, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_NOPREFIX,
+    DT_SINGLELINE, DT_VCENTER, HDC, HFONT, HMONITOR, MONITORINFO, TRANSPARENT,
 };
 use windows_sys::Win32::Graphics::GdiPlus::{
-    GdipAddPathArc, GdipClosePathFigure, GdipCreateBitmapFromScan0, GdipCreatePath, GdipCreatePen1, GdipCreateSolidFill, GdipDeleteBrush,
-    GdipDeleteGraphics, GdipDeletePath, GdipDeletePen, GdipDisposeImage, GdipDrawArc, GdipDrawLines, GdipDrawPath, GdipFillEllipse,
-    GdipFillPath, GdipFillPolygon, GdipGetImageGraphicsContext, GdipSetPenEndCap, GdipSetPenLineJoin, GdipSetPenStartCap,
-    GdipSetPixelOffsetMode, GdipSetSmoothingMode, FillModeAlternate, GpBitmap, GpBrush, GpGraphics, GpImage, GpPath, GpPen, GpSolidFill,
-    LineCapRound, LineJoinRound, PixelOffsetModeHalf, PointF, SmoothingModeAntiAlias, UnitPixel,
+    FillModeAlternate, GdipAddPathArc, GdipClosePathFigure, GdipCreateBitmapFromScan0,
+    GdipCreatePath, GdipCreatePen1, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics,
+    GdipDeletePath, GdipDeletePen, GdipDisposeImage, GdipDrawArc, GdipDrawLines, GdipDrawPath,
+    GdipFillEllipse, GdipFillPath, GdipFillPolygon, GdipGetImageGraphicsContext, GdipSetPenEndCap,
+    GdipSetPenLineJoin, GdipSetPenStartCap, GdipSetPixelOffsetMode, GdipSetSmoothingMode, GpBitmap,
+    GpBrush, GpGraphics, GpImage, GpPath, GpPen, GpSolidFill, LineCapRound, LineJoinRound,
+    PixelOffsetModeHalf, PointF, SmoothingModeAntiAlias, UnitPixel,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
@@ -58,10 +61,28 @@ struct Theme {
     shadow: f32,
 }
 
-const DARK: Theme =
-    Theme { card: 0x262626, border: 0x3A3A3A, text: 0xFFFFFF, sub: 0xB0B0B0, chip: 0x363636, chip_border: 0x474747, green: 0x30D158, tint: 0.22, shadow: 0.03 };
-const LIGHT: Theme =
-    Theme { card: 0xFFFFFF, border: 0xDDDDDD, text: 0x1A1A1A, sub: 0x5F5F5F, chip: 0xF2F2F2, chip_border: 0xD8D8D8, green: 0x1E9E3E, tint: 0.14, shadow: 0.012 };
+const DARK: Theme = Theme {
+    card: 0x262626,
+    border: 0x3A3A3A,
+    text: 0xFFFFFF,
+    sub: 0xB0B0B0,
+    chip: 0x363636,
+    chip_border: 0x474747,
+    green: 0x30D158,
+    tint: 0.22,
+    shadow: 0.03,
+};
+const LIGHT: Theme = Theme {
+    card: 0xFFFFFF,
+    border: 0xDDDDDD,
+    text: 0x1A1A1A,
+    sub: 0x5F5F5F,
+    chip: 0xF2F2F2,
+    chip_border: 0xD8D8D8,
+    green: 0x1E9E3E,
+    tint: 0.14,
+    shadow: 0.012,
+};
 
 struct Fonts {
     title: HFONT,
@@ -90,7 +111,11 @@ impl Fonts {
                 face.as_ptr(),
             )
         };
-        Fonts { title: make(13, 700), body: make(12, 400), key: make(12, 600) }
+        Fonts {
+            title: make(13, 700),
+            body: make(12, 400),
+            key: make(12, 600),
+        }
     }
 }
 
@@ -162,7 +187,8 @@ pub fn show(hud: Option<Hud>) {
                 }
                 s.hud = Some(h);
                 s.visible = true;
-                s.dark = !apps_use_light_theme();            }
+                s.dark = !apps_use_light_theme();
+            }
             None => {
                 if !s.visible {
                     return;
@@ -188,7 +214,11 @@ impl State {
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32();
         self.last = now;
-        self.alpha = if self.visible { (self.alpha + dt / FADE_IN_S).min(1.0) } else { (self.alpha - dt / FADE_OUT_S).max(0.0) };
+        self.alpha = if self.visible {
+            (self.alpha + dt / FADE_IN_S).min(1.0)
+        } else {
+            (self.alpha - dt / FADE_OUT_S).max(0.0)
+        };
         if !self.visible && self.alpha <= 0.0 {
             // Destroying the windows also stops their timer.
             self.cards.clear();
@@ -197,7 +227,11 @@ impl State {
             return;
         }
         self.render();
-        let pulsing = self.visible && self.hud.as_ref().is_some_and(|h| h.kind == HudKind::Recording);
+        let pulsing = self.visible
+            && self
+                .hud
+                .as_ref()
+                .is_some_and(|h| h.kind == HudKind::Recording);
         if !pulsing && self.alpha >= 1.0 {
             if let Some(first) = self.cards.first() {
                 unsafe { KillTimer(first.hwnd, TIMER_ID) };
@@ -263,7 +297,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     }
 }
 
-unsafe extern "system" fn collect_monitor(monitor: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
+unsafe extern "system" fn collect_monitor(
+    monitor: HMONITOR,
+    _: HDC,
+    _: *mut RECT,
+    data: LPARAM,
+) -> BOOL {
     (*(data as *mut Vec<HMONITOR>)).push(monitor);
     1
 }
@@ -274,7 +313,12 @@ fn create_cards() -> Vec<Card> {
     let mut monitors: Vec<HMONITOR> = Vec::new();
     let class = class_name();
     unsafe {
-        EnumDisplayMonitors(null_mut(), null(), Some(collect_monitor), &mut monitors as *mut _ as LPARAM);
+        EnumDisplayMonitors(
+            null_mut(),
+            null(),
+            Some(collect_monitor),
+            &mut monitors as *mut _ as LPARAM,
+        );
         monitors
             .into_iter()
             .filter_map(|m| {
@@ -287,7 +331,11 @@ fn create_cards() -> Vec<Card> {
                 GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
                 let work = info.rcWork;
                 let hwnd = CreateWindowExW(
-                    WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                    WS_EX_LAYERED
+                        | WS_EX_TRANSPARENT
+                        | WS_EX_TOOLWINDOW
+                        | WS_EX_TOPMOST
+                        | WS_EX_NOACTIVATE,
                     class.as_ptr(),
                     null(),
                     WS_POPUP,
@@ -304,7 +352,13 @@ fn create_cards() -> Vec<Card> {
                     return None;
                 }
                 let dpi = dx.max(96);
-                Some(Card { hwnd, dpi, work, fonts: Fonts::new(dpi), shown: false })
+                Some(Card {
+                    hwnd,
+                    dpi,
+                    work,
+                    fonts: Fonts::new(dpi),
+                    shown: false,
+                })
             })
             .collect()
     }
@@ -367,6 +421,8 @@ impl Shapes {
         GdipDeletePath(path);
     }
 
+    // Same flat rect + style arguments as round_path and fill_round, matching the GDI+ calls it wraps.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn stroke_round(&self, x: f32, y: f32, w: f32, h: f32, r: f32, color: u32, width: f32) {
         let i = width / 2.0;
         let path = self.round_path(x + i, y + i, w - width, h - width, r - i);
@@ -379,7 +435,14 @@ impl Shapes {
     unsafe fn circle(&self, cx: f32, cy: f32, r: f32, color: u32) {
         let mut brush: *mut GpSolidFill = null_mut();
         GdipCreateSolidFill(color, &mut brush);
-        GdipFillEllipse(self.g, brush as *mut GpBrush, cx - r, cy - r, 2.0 * r, 2.0 * r);
+        GdipFillEllipse(
+            self.g,
+            brush as *mut GpBrush,
+            cx - r,
+            cy - r,
+            2.0 * r,
+            2.0 * r,
+        );
         GdipDeleteBrush(brush as *mut GpBrush);
     }
 
@@ -395,7 +458,13 @@ impl Shapes {
     unsafe fn polygon(&self, pts: &[PointF], color: u32) {
         let mut brush: *mut GpSolidFill = null_mut();
         GdipCreateSolidFill(color, &mut brush);
-        GdipFillPolygon(self.g, brush as *mut GpBrush, pts.as_ptr(), pts.len() as i32, FillModeAlternate);
+        GdipFillPolygon(
+            self.g,
+            brush as *mut GpBrush,
+            pts.as_ptr(),
+            pts.len() as i32,
+            FillModeAlternate,
+        );
         GdipDeleteBrush(brush as *mut GpBrush);
     }
 
@@ -412,9 +481,18 @@ impl Shapes {
             let (nx, ny) = (a.cos(), a.sin());
             let s = 3.4 * k;
             let pts = [
-                PointF { X: px + dx * s, Y: py + dy * s },
-                PointF { X: px + nx * s * 0.95 - dx * s * 0.25, Y: py + ny * s * 0.95 - dy * s * 0.25 },
-                PointF { X: px - nx * s * 0.95 - dx * s * 0.25, Y: py - ny * s * 0.95 - dy * s * 0.25 },
+                PointF {
+                    X: px + dx * s,
+                    Y: py + dy * s,
+                },
+                PointF {
+                    X: px + nx * s * 0.95 - dx * s * 0.25,
+                    Y: py + ny * s * 0.95 - dy * s * 0.25,
+                },
+                PointF {
+                    X: px - nx * s * 0.95 - dx * s * 0.25,
+                    Y: py - ny * s * 0.95 - dy * s * 0.25,
+                },
             ];
             self.polygon(&pts, color);
         }
@@ -423,9 +501,18 @@ impl Shapes {
 
     unsafe fn check(&self, cx: f32, cy: f32, k: f32, color: u32) {
         let pts = [
-            PointF { X: cx - 5.0 * k, Y: cy + 0.2 * k },
-            PointF { X: cx - 1.5 * k, Y: cy + 3.6 * k },
-            PointF { X: cx + 5.2 * k, Y: cy - 3.4 * k },
+            PointF {
+                X: cx - 5.0 * k,
+                Y: cy + 0.2 * k,
+            },
+            PointF {
+                X: cx - 1.5 * k,
+                Y: cy + 3.6 * k,
+            },
+            PointF {
+                X: cx + 5.2 * k,
+                Y: cy - 3.4 * k,
+            },
         ];
         let pen = self.pen(color, 2.3 * k);
         GdipDrawLines(self.g, pen, pts.as_ptr(), pts.len() as i32);
@@ -455,9 +542,30 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
         for (s, key) in &hud.line {
             let mut text = wide(s);
             text.pop();
-            let w = extent(dc, if *key { card.fonts.key } else { card.fonts.body }, &text);
-            let (left, advance) = if *key { (x + gap + pad, w + 2 * (pad + gap)) } else { (x, w) };
-            runs.push(Run { text, key: *key, rect: RECT { left, top: line_y, right: left + w, bottom: line_y + line_h } });
+            let w = extent(
+                dc,
+                if *key {
+                    card.fonts.key
+                } else {
+                    card.fonts.body
+                },
+                &text,
+            );
+            let (left, advance) = if *key {
+                (x + gap + pad, w + 2 * (pad + gap))
+            } else {
+                (x, w)
+            };
+            runs.push(Run {
+                text,
+                key: *key,
+                rect: RECT {
+                    left,
+                    top: line_y,
+                    right: left + w,
+                    bottom: line_y + line_h,
+                },
+            });
             x += advance;
         }
         let line_w = x - p(MARGIN + TEXT_X);
@@ -483,7 +591,14 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
         let old_bmp = SelectObject(dc, dib);
 
         let mut bmp: *mut GpBitmap = null_mut();
-        GdipCreateBitmapFromScan0(w, h, w * 4, PIXEL_FORMAT_32BPP_PARGB, bits as *const u8, &mut bmp);
+        GdipCreateBitmapFromScan0(
+            w,
+            h,
+            w * 4,
+            PIXEL_FORMAT_32BPP_PARGB,
+            bits as *const u8,
+            &mut bmp,
+        );
         let mut g: *mut GpGraphics = null_mut();
         if !bmp.is_null() {
             GdipGetImageGraphicsContext(bmp as *mut GpImage, &mut g);
@@ -492,11 +607,19 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
             GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
             GdipSetPixelOffsetMode(g, PixelOffsetModeHalf);
             let sh = Shapes { g };
-            let (cx, cy, cw, ch, r) = (m as f32, m as f32, card_w as f32, card_h as f32, RADIUS * k);
+            let (cx, cy, cw, ch, r) =
+                (m as f32, m as f32, card_w as f32, card_h as f32, RADIUS * k);
 
             for i in 0..10 {
                 let e = (i as f32 + 1.0) * 1.3 * k;
-                sh.fill_round(cx - e, cy - e + 3.0 * k, cw + 2.0 * e, ch + 2.0 * e, r + e, with_alpha(0, t.shadow));
+                sh.fill_round(
+                    cx - e,
+                    cy - e + 3.0 * k,
+                    cw + 2.0 * e,
+                    ch + 2.0 * e,
+                    r + e,
+                    with_alpha(0, t.shadow),
+                );
             }
             sh.fill_round(cx, cy, cw, ch, r, argb(t.card));
             sh.stroke_round(cx, cy, cw, ch, r, argb(t.border), k.max(1.0));
@@ -510,7 +633,12 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
             sh.circle(ix, iy, 16.0 * k, argb(mix(t.card, accent, t.tint)));
             match hud.kind {
                 HudKind::Recording => {
-                    sh.circle(ix, iy, (6.0 + 8.0 * phase) * k, with_alpha(RED, (1.0 - phase) * 0.45));
+                    sh.circle(
+                        ix,
+                        iy,
+                        (6.0 + 8.0 * phase) * k,
+                        with_alpha(RED, (1.0 - phase) * 0.45),
+                    );
                     sh.circle(ix, iy, 6.0 * k, argb(RED));
                 }
                 HudKind::Looping => sh.loop_arrows(ix, iy, k, argb(accent)),
@@ -519,7 +647,10 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
 
             for run in runs.iter().filter(|r| r.key) {
                 let (x, y) = ((run.rect.left - pad) as f32, run.rect.top as f32);
-                let (rw, rh) = ((run.rect.right - run.rect.left + 2 * pad) as f32, line_h as f32);
+                let (rw, rh) = (
+                    (run.rect.right - run.rect.left + 2 * pad) as f32,
+                    line_h as f32,
+                );
                 sh.fill_round(x, y, rw, rh, 5.0 * k, argb(t.chip));
                 sh.stroke_round(x, y, rw, rh, 5.0 * k, argb(t.chip_border), k.max(1.0));
             }
@@ -538,14 +669,32 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
         let old_font = SelectObject(dc, card.fonts.title);
         SetTextColor(dc, colorref(t.text));
         SetTextCharacterExtra(dc, spacing);
-        let mut tr = RECT { left: p(MARGIN + TEXT_X), top: p(MARGIN + 11.0), right: w, bottom: p(MARGIN + 29.0) };
+        let mut tr = RECT {
+            left: p(MARGIN + TEXT_X),
+            top: p(MARGIN + 11.0),
+            right: w,
+            bottom: p(MARGIN + 29.0),
+        };
         DrawTextW(dc, title.as_ptr(), title.len() as i32, &mut tr, flags);
         SetTextCharacterExtra(dc, 0);
         for run in &mut runs {
-            SelectObject(dc, if run.key { card.fonts.key } else { card.fonts.body });
+            SelectObject(
+                dc,
+                if run.key {
+                    card.fonts.key
+                } else {
+                    card.fonts.body
+                },
+            );
             SetTextColor(dc, colorref(if run.key { t.text } else { t.sub }));
             run.rect.right += p(4.0);
-            DrawTextW(dc, run.text.as_ptr(), run.text.len() as i32, &mut run.rect, flags);
+            DrawTextW(
+                dc,
+                run.text.as_ptr(),
+                run.text.len() as i32,
+                &mut run.rect,
+                flags,
+            );
         }
         SelectObject(dc, old_font);
         GdiFlush();
@@ -555,7 +704,10 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
 
         let slide = ((1.0 - ease) * -10.0 * k).round() as i32;
         let work = card.work;
-        let pos = POINT { x: work.left + ((work.right - work.left) - w) / 2, y: work.top + p(TOP_GAP) - m + slide };
+        let pos = POINT {
+            x: work.left + ((work.right - work.left) - w) / 2,
+            y: work.top + p(TOP_GAP) - m + slide,
+        };
         let size = SIZE { cx: w, cy: h };
         let src = POINT { x: 0, y: 0 };
         let blend = BLENDFUNCTION {
@@ -564,10 +716,28 @@ fn draw(card: &mut Card, hud: &Hud, t: &Theme, ease: f32, phase: f32) {
             SourceConstantAlpha: (ease.clamp(0.0, 1.0) * 255.0).round() as u8,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
-        UpdateLayeredWindow(card.hwnd, null_mut(), &pos, &size, dc, &src, 0, &blend, ULW_ALPHA);
+        UpdateLayeredWindow(
+            card.hwnd,
+            null_mut(),
+            &pos,
+            &size,
+            dc,
+            &src,
+            0,
+            &blend,
+            ULW_ALPHA,
+        );
         if !card.shown {
             ShowWindow(card.hwnd, SW_SHOWNOACTIVATE);
-            SetWindowPos(card.hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(
+                card.hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             card.shown = true;
         }
 

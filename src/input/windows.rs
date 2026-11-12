@@ -54,14 +54,22 @@ pub fn start() -> Result<Hook, String> {
         UnhookWindowsHookEx(ms);
     });
     let thread_id = rx.recv().map_err(|e| e.to_string())??;
-    Ok(Hook { thread_id, join: Some(join) })
+    Ok(Hook {
+        thread_id,
+        join: Some(join),
+    })
 }
 
 unsafe extern "system" fn kb_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let k = &*(l as *const KBDLLHOOKSTRUCT);
         let down = matches!(w as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
-        let ev = Ev::Key { code: k.vkCode, scan: k.scanCode, flags: k.flags as u64, down };
+        let ev = Ev::Key {
+            code: k.vkCode,
+            scan: k.scanCode,
+            flags: k.flags as u64,
+            down,
+        };
         crate::engine::on_input(ev, k.dwExtraInfo == MAGIC);
     }
     CallNextHookEx(null_mut(), code, w, l)
@@ -72,8 +80,16 @@ unsafe extern "system" fn mouse_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT
         let m = &*(l as *const MSLLHOOKSTRUCT);
         let (x, y) = (m.pt.x, m.pt.y);
         let hi = (m.mouseData >> 16) as u16;
-        let button = |b: u8, down: bool| Some(Ev::Button { b, down, x, y, n: 1 });
-        let side = if hi == XBUTTON1 as u16 { 4 } else { 5 };
+        let button = |b: u8, down: bool| {
+            Some(Ev::Button {
+                b,
+                down,
+                x,
+                y,
+                n: 1,
+            })
+        };
+        let side = if hi == XBUTTON1 { 4 } else { 5 };
         let ev = match w as u32 {
             WM_MOUSEMOVE => Some(Ev::Move { x, y }),
             WM_LBUTTONDOWN => button(1, true),
@@ -84,8 +100,14 @@ unsafe extern "system" fn mouse_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT
             WM_MBUTTONUP => button(3, false),
             WM_XBUTTONDOWN => button(side, true),
             WM_XBUTTONUP => button(side, false),
-            WM_MOUSEWHEEL => Some(Ev::Wheel { dx: 0, dy: hi as i16 as i32 }),
-            WM_MOUSEHWHEEL => Some(Ev::Wheel { dx: hi as i16 as i32, dy: 0 }),
+            WM_MOUSEWHEEL => Some(Ev::Wheel {
+                dx: 0,
+                dy: hi as i16 as i32,
+            }),
+            WM_MOUSEHWHEEL => Some(Ev::Wheel {
+                dx: hi as i16 as i32,
+                dy: 0,
+            }),
             _ => None,
         };
         if let Some(ev) = ev {
@@ -124,7 +146,12 @@ fn mouse(x: i32, y: i32, flags: u32, data: i32) -> INPUT {
 
 pub fn inject(ev: &Ev, _buttons_down: u32) {
     match *ev {
-        Ev::Key { code, scan, flags, down } => {
+        Ev::Key {
+            code,
+            scan,
+            flags,
+            down,
+        } => {
             let mut i: INPUT = unsafe { zeroed() };
             i.r#type = INPUT_KEYBOARD;
             let mut f = if down { 0 } else { KEYEVENTF_KEYUP };
@@ -149,8 +176,14 @@ pub fn inject(ev: &Ev, _buttons_down: u32) {
                 (2, false) => (MOUSEEVENTF_RIGHTUP, 0),
                 (3, true) => (MOUSEEVENTF_MIDDLEDOWN, 0),
                 (3, false) => (MOUSEEVENTF_MIDDLEUP, 0),
-                (b, true) => (MOUSEEVENTF_XDOWN, if b == 4 { XBUTTON1 } else { XBUTTON2 } as i32),
-                (b, false) => (MOUSEEVENTF_XUP, if b == 4 { XBUTTON1 } else { XBUTTON2 } as i32),
+                (b, true) => (
+                    MOUSEEVENTF_XDOWN,
+                    if b == 4 { XBUTTON1 } else { XBUTTON2 } as i32,
+                ),
+                (b, false) => (
+                    MOUSEEVENTF_XUP,
+                    if b == 4 { XBUTTON1 } else { XBUTTON2 } as i32,
+                ),
             };
             send(mouse(x, y, flags, data));
         }

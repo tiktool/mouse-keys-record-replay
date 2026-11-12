@@ -19,12 +19,29 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "k")]
 pub enum Ev {
     /// Windows: vk + scan + LLKHF flags. macOS: keycode + CGEventFlags. Linux: X keycode.
-    Key { code: u32, scan: u32, flags: u64, down: bool },
-    Move { x: i32, y: i32 },
+    Key {
+        code: u32,
+        scan: u32,
+        flags: u64,
+        down: bool,
+    },
+    Move {
+        x: i32,
+        y: i32,
+    },
     /// b: 1 left, 2 right, 3 middle, 4/5 side buttons (Windows, macOS).
     /// Linux uses raw X button numbers (4-7 are wheel steps). n = click count.
-    Button { b: u8, down: bool, x: i32, y: i32, n: u8 },
-    Wheel { dx: i32, dy: i32 },
+    Button {
+        b: u8,
+        down: bool,
+        x: i32,
+        y: i32,
+        n: u8,
+    },
+    Wheel {
+        dx: i32,
+        dy: i32,
+    },
 }
 
 #[cfg(windows)]

@@ -6,8 +6,8 @@ use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{kCFRunLoopCommonModes, kCFRunLoopDefaultMode, CFRunLoop};
 use core_foundation::string::{CFString, CFStringRef};
 use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
-    CGEventTapPlacement, CGEventType, CGMouseButton, CallbackResult, EventField, ScrollEventUnit,
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType, CGMouseButton, CallbackResult, EventField, ScrollEventUnit,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
@@ -86,16 +86,26 @@ fn convert(ty: CGEventType, e: &CGEvent) -> Option<Ev> {
         down,
         x,
         y,
-        n: e.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE).clamp(0, 255) as u8,
+        n: e.get_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE)
+            .clamp(0, 255) as u8,
     };
-    let other = || (e.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER) + 1).clamp(3, 5) as u8;
+    let other =
+        || (e.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER) + 1).clamp(3, 5) as u8;
     let code = e.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u32;
     let flags = e.get_flags().bits();
     Some(match ty {
-        CGEventType::KeyDown | CGEventType::KeyUp => {
-            Ev::Key { code, scan: 0, flags, down: matches!(ty, CGEventType::KeyDown) }
-        }
-        CGEventType::FlagsChanged => Ev::Key { code, scan: 0, flags, down: flags_changed_down(code, flags) },
+        CGEventType::KeyDown | CGEventType::KeyUp => Ev::Key {
+            code,
+            scan: 0,
+            flags,
+            down: matches!(ty, CGEventType::KeyDown),
+        },
+        CGEventType::FlagsChanged => Ev::Key {
+            code,
+            scan: 0,
+            flags,
+            down: flags_changed_down(code, flags),
+        },
         CGEventType::MouseMoved
         | CGEventType::LeftMouseDragged
         | CGEventType::RightMouseDragged
@@ -123,9 +133,20 @@ pub fn start() -> Result<Hook, String> {
         let port_cb = port.clone();
         use CGEventType::*;
         let mask = vec![
-            KeyDown, KeyUp, FlagsChanged, MouseMoved, LeftMouseDown, LeftMouseUp, LeftMouseDragged,
-            RightMouseDown, RightMouseUp, RightMouseDragged, OtherMouseDown, OtherMouseUp,
-            OtherMouseDragged, ScrollWheel,
+            KeyDown,
+            KeyUp,
+            FlagsChanged,
+            MouseMoved,
+            LeftMouseDown,
+            LeftMouseUp,
+            LeftMouseDragged,
+            RightMouseDown,
+            RightMouseUp,
+            RightMouseDragged,
+            OtherMouseDown,
+            OtherMouseUp,
+            OtherMouseDragged,
+            ScrollWheel,
         ];
         // Session level: a listen-only tap there needs only Input Monitoring, and events
         // posted at HID still pass through it with their user data intact.
@@ -141,7 +162,8 @@ pub fn start() -> Result<Hook, String> {
                         unsafe { CGEventTapEnable(p as CFMachPortRef, true) };
                     }
                 } else if let Some(ev) = convert(ty, e) {
-                    let injected = e.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == MAGIC;
+                    let injected =
+                        e.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == MAGIC;
                     crate::engine::on_input(ev, injected);
                 }
                 CallbackResult::Keep
@@ -150,11 +172,16 @@ pub fn start() -> Result<Hook, String> {
         let tap = match tap {
             Ok(t) => t,
             Err(()) => {
-                let _ = tx.send(Err("event tap refused: grant Input Monitoring and Accessibility".into()));
+                let _ = tx.send(Err(
+                    "event tap refused: grant Input Monitoring and Accessibility".into(),
+                ));
                 return;
             }
         };
-        port.store(tap.mach_port().as_concrete_TypeRef() as *mut c_void, Ordering::SeqCst);
+        port.store(
+            tap.mach_port().as_concrete_TypeRef() as *mut c_void,
+            Ordering::SeqCst,
+        );
         let Ok(src) = tap.mach_port().create_runloop_source(0) else {
             let _ = tx.send(Err("event tap run loop source failed".into()));
             return;
@@ -165,12 +192,20 @@ pub fn start() -> Result<Hook, String> {
         let _ = tx.send(Ok(rl));
         // A CFRunLoopStop sent before the loop starts is lost, so re-check the flag on a short timeout.
         while !stop_t.load(Ordering::SeqCst) {
-            CFRunLoop::run_in_mode(unsafe { kCFRunLoopDefaultMode }, Duration::from_millis(500), false);
+            CFRunLoop::run_in_mode(
+                unsafe { kCFRunLoopDefaultMode },
+                Duration::from_millis(500),
+                false,
+            );
         }
         drop(tap);
     });
     match rx.recv() {
-        Ok(Ok(run_loop)) => Ok(Hook { run_loop, stop, thread: Some(thread) }),
+        Ok(Ok(run_loop)) => Ok(Hook {
+            run_loop,
+            stop,
+            thread: Some(thread),
+        }),
         Ok(Err(e)) => {
             let _ = thread.join();
             Err(e)
@@ -182,12 +217,16 @@ pub fn start() -> Result<Hook, String> {
 pub fn inject(ev: &Ev, buttons_down: u32) {
     // Private state: posted flags come only from what we set, never merged with the
     // physical keyboard, so a user holding Shift does not leak into the replay and vice versa.
-    let Ok(src) = CGEventSource::new(CGEventSourceStateID::Private) else { return };
+    let Ok(src) = CGEventSource::new(CGEventSourceStateID::Private) else {
+        return;
+    };
     let mouse = |ty, x: i32, y: i32, btn| {
         CGEvent::new_mouse_event(src.clone(), ty, CGPoint::new(x as f64, y as f64), btn).ok()
     };
     let event = match *ev {
-        Ev::Key { code, flags, down, .. } => CGEvent::new_keyboard_event(src.clone(), code as u16, down)
+        Ev::Key {
+            code, flags, down, ..
+        } => CGEvent::new_keyboard_event(src.clone(), code as u16, down)
             .ok()
             .inspect(|e| {
                 if modifier_bits(code).is_some() {
@@ -201,7 +240,11 @@ pub fn inject(ev: &Ev, buttons_down: u32) {
             } else if buttons_down & (1 << 2) != 0 {
                 (CGEventType::RightMouseDragged, CGMouseButton::Right, 1)
             } else if let Some(b) = (3..=5).find(|b| buttons_down & (1 << b) != 0) {
-                (CGEventType::OtherMouseDragged, CGMouseButton::Center, b as i64 - 1)
+                (
+                    CGEventType::OtherMouseDragged,
+                    CGMouseButton::Center,
+                    b as i64 - 1,
+                )
             } else {
                 (CGEventType::MouseMoved, CGMouseButton::Left, 0)
             };
@@ -227,7 +270,9 @@ pub fn inject(ev: &Ev, buttons_down: u32) {
                 e.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, n as i64);
             })
         }
-        Ev::Wheel { dx, dy } => CGEvent::new_scroll_event(src.clone(), ScrollEventUnit::PIXEL, 2, dy, dx, 0).ok(),
+        Ev::Wheel { dx, dy } => {
+            CGEvent::new_scroll_event(src.clone(), ScrollEventUnit::PIXEL, 2, dy, dx, 0).ok()
+        }
     };
     if let Some(e) = event {
         e.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, MAGIC);
@@ -269,7 +314,8 @@ pub fn permission_ok(prompt: bool) -> bool {
             AXIsProcessTrusted()
         }
     };
-    let listen = unsafe { CGPreflightListenEventAccess() || (prompt && CGRequestListenEventAccess()) };
+    let listen =
+        unsafe { CGPreflightListenEventAccess() || (prompt && CGRequestListenEventAccess()) };
     ax && listen
 }
 

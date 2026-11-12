@@ -27,7 +27,7 @@ A small tray app that records what your mouse and keyboard do and plays it back,
 2. **Play.** Press `Ctrl+Alt+Shift+F2` to play the recording once.
 3. **Loop.** Press `Ctrl+Alt+Shift+F3` to repeat it until you stop it.
 
-Touch the mouse or press any key and playback stops right away, so you always stay in control.
+Touch the mouse or press any key and playback stops right away, so you always stay in control. Both the stop behaviour and what gets recorded can be changed in Settings.
 
 ## Install
 
@@ -59,7 +59,8 @@ Both install scripts check the release signature before they install anything. T
 
 - **One shortcut per action.** Record, play once and loop, all from the keyboard. Shortcuts can be changed in Settings.
 - **Mouse and keyboard together.** Moves, clicks, scrolls, drags and key presses are captured with their original timing.
-- **Stops when you move.** Any real mouse or keyboard input ends playback instantly.
+- **Stops when you move.** Any real mouse or keyboard input ends playback instantly. Turn off "Stop on mouse or key input" and only the shortcuts stop it.
+- **Clicks and keys only.** Turn on "Ignore mouse movement" and a recording keeps clicks, scrolls and key presses but no pointer movement. Clicks play wherever the pointer is, so you can keep using the mouse and keyboard while it runs, and the play or loop shortcut stops it.
 - **Recording history.** Every recording is saved automatically. Open the list with a shortcut to switch, star, rename or delete recordings, and the one you pick is what play and loop use.
 - **Random timing.** An optional toggle shifts each press up to half a second early or late on every run, so loops do not repeat with machine precision. Positions stay exactly where you recorded them.
 - **Lives in the tray.** Starts at login, stays out of the way and shows a status card on every monitor while it records, when a recording is saved and while it loops. The card never takes focus and lets clicks pass through.
@@ -76,7 +77,7 @@ Both install scripts check the release signature before they install anything. T
 | Loop | `Ctrl+Alt+Shift+F3` | `Cmd+Option+Shift+F3` |
 | Playback speed 1/4x, 1/2x, 1x, 2x, 4x, custom | `Ctrl+Alt+Shift+F5` to `F10` | `Cmd+Option+Shift+F5` to `F10` |
 | Open recordings | `Ctrl+Alt+Shift+F4` | `Cmd+Option+Shift+F4` |
-| Stop playback | Move the mouse or press any key | Move the mouse or press any key |
+| Stop playback | Move the mouse or press any key, or press the play or loop shortcut again | Move the mouse or press any key, or press the play or loop shortcut again |
 
 ## Privacy
 

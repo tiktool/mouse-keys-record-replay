@@ -8,24 +8,33 @@ use std::ptr::{null, null_mut};
 
 use windows_sys::core::{BOOL, PCWSTR};
 use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE};
+use windows_sys::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+};
 use windows_sys::Win32::Graphics::Gdi::{
-    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, DeleteDC, DeleteObject, DrawTextW, EndPaint, GetMonitorInfoW,
-    InvalidateRect, MonitorFromPoint, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, DEFAULT_CHARSET, DT_CALCRECT, DT_CENTER,
-    DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, HDC, HFONT, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, DeleteDC,
+    DeleteObject, DrawTextW, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromPoint,
+    SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, DEFAULT_CHARSET, DT_CALCRECT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, HDC, HFONT,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
 };
 use windows_sys::Win32::Graphics::GdiPlus::{
-    GdipAddPathArc, GdipClosePathFigure, GdipCreateBitmapFromScan0, GdipCreateFromHDC, GdipCreatePath, GdipCreatePen1, GdipCreateSolidFill,
-    GdipDeleteBrush, GdipDeleteGraphics, GdipDeletePath, GdipDeletePen, GdipDisposeImage, GdipDrawImageRectI, GdipDrawPath, GdipFillEllipse,
-    GdipFillPath, GdipFillPolygon, GdipFillRectangle, GdipSetInterpolationMode, GdipSetPixelOffsetMode, GdipSetSmoothingMode, GdiplusStartup, GdiplusStartupInput,
-    GpBitmap, GpBrush, GpGraphics, GpImage, GpPath, GpPen, GpSolidFill, PointF, FillModeAlternate, InterpolationModeHighQualityBicubic,
-    PixelOffsetModeHalf, SmoothingModeAntiAlias, UnitPixel,
+    FillModeAlternate, GdipAddPathArc, GdipClosePathFigure, GdipCreateBitmapFromScan0,
+    GdipCreateFromHDC, GdipCreatePath, GdipCreatePen1, GdipCreateSolidFill, GdipDeleteBrush,
+    GdipDeleteGraphics, GdipDeletePath, GdipDeletePen, GdipDisposeImage, GdipDrawImageRectI,
+    GdipDrawPath, GdipFillEllipse, GdipFillPath, GdipFillPolygon, GdipFillRectangle,
+    GdipSetInterpolationMode, GdipSetPixelOffsetMode, GdipSetSmoothingMode, GdiplusStartup,
+    GdiplusStartupInput, GpBitmap, GpBrush, GpGraphics, GpImage, GpPath, GpPen, GpSolidFill,
+    InterpolationModeHighQualityBicubic, PixelOffsetModeHalf, PointF, SmoothingModeAntiAlias,
+    UnitPixel,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows_sys::Win32::UI::Controls::WM_MOUSELEAVE;
-use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForMonitor, GetDpiForWindow, GetSystemMetricsForDpi, MDT_EFFECTIVE_DPI};
+use windows_sys::Win32::UI::HiDpi::{
+    AdjustWindowRectExForDpi, GetDpiForMonitor, GetDpiForWindow, GetSystemMetricsForDpi,
+    MDT_EFFECTIVE_DPI,
+};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -36,7 +45,7 @@ use crate::speed;
 
 /// Client size in logical pixels (96 dpi).
 const W: i32 = 460;
-const H: i32 = 880;
+const H: i32 = 980;
 const PAD: i32 = 20;
 const CARD_W: i32 = W - 2 * PAD;
 const PIXEL_FORMAT_32BPP_ARGB: i32 = 0x0026_200A;
@@ -101,6 +110,8 @@ pub(super) enum Hit {
     Autostart,
     AutoUpdate,
     Random,
+    StopOnInput,
+    SkipMoves,
     Check,
     Star,
     Site,
@@ -128,7 +139,14 @@ pub(super) struct Fonts([HFONT; 6]);
 
 impl Fonts {
     pub(super) fn new(dpi: u32) -> Self {
-        let spec = [(18, 600), (14, 600), (14, 400), (13, 400), (12, 400), (12, 600)];
+        let spec = [
+            (18, 600),
+            (14, 600),
+            (14, 400),
+            (13, 400),
+            (12, 400),
+            (12, 600),
+        ];
         let face = wide("Segoe UI");
         Fonts(spec.map(|(px, weight)| unsafe {
             CreateFontW(
@@ -217,7 +235,15 @@ pub(super) fn apps_use_light_theme() -> bool {
     let mut data: u32 = 1;
     let mut size = size_of::<u32>() as u32;
     let rc = unsafe {
-        RegGetValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr(), RRF_RT_REG_DWORD, null_mut(), &mut data as *mut u32 as *mut _, &mut size)
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            null_mut(),
+            &mut data as *mut u32 as *mut _,
+            &mut size,
+        )
     };
     rc != 0 || data != 0
 }
@@ -236,16 +262,36 @@ fn apply_theme(hwnd: HWND, dark: bool) {
     let caption = colorref(p.bg);
     let text = colorref(p.text);
     unsafe {
-        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE as u32, &flag as *const BOOL as *const _, size_of::<BOOL>() as u32);
-        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR as u32, &caption as *const u32 as *const _, 4);
-        DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR as u32, &text as *const u32 as *const _, 4);
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+            &flag as *const BOOL as *const _,
+            size_of::<BOOL>() as u32,
+        );
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR as u32,
+            &caption as *const u32 as *const _,
+            4,
+        );
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TEXT_COLOR as u32,
+            &text as *const u32 as *const _,
+            4,
+        );
     }
 }
 
 pub(super) fn start_gdiplus() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
-        let input = GdiplusStartupInput { GdiplusVersion: 1, DebugEventCallback: 0, SuppressBackgroundThread: 0, SuppressExternalCodecs: 0 };
+        let input = GdiplusStartupInput {
+            GdiplusVersion: 1,
+            DebugEventCallback: 0,
+            SuppressBackgroundThread: 0,
+            SuppressExternalCodecs: 0,
+        };
         let mut token = 0usize;
         unsafe { GdiplusStartup(&mut token, &input, null_mut()) };
     });
@@ -311,15 +357,25 @@ pub fn open() {
         info.cbSize = size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(monitor, &mut info);
         let work = info.rcWork;
-        let mut r = RECT { left: 0, top: 0, right: W * dx as i32 / 96, bottom: H * dx as i32 / 96 };
+        let mut r = RECT {
+            left: 0,
+            top: 0,
+            right: W * dx as i32 / 96,
+            bottom: H * dx as i32 / 96,
+        };
         AdjustWindowRectExForDpi(&mut r, STYLE, 0, 0, dx);
         // A short screen at a high scale gets the whole window drawn smaller
         // rather than cut off at the bottom.
         let frame = (r.bottom - r.top) - H * dx as i32 / 96;
         let fit = ((work.bottom - work.top - frame).max(1) * 96 / H) as u32;
-        let scale = dx.min(fit).max(72);
+        let scale = dx.min(fit).max(66);
         if scale < dx {
-            r = RECT { left: 0, top: 0, right: W * scale as i32 / 96, bottom: H * scale as i32 / 96 };
+            r = RECT {
+                left: 0,
+                top: 0,
+                right: W * scale as i32 / 96,
+                bottom: H * scale as i32 / 96,
+            };
             AdjustWindowRectExForDpi(&mut r, STYLE, 0, 0, dx);
         }
         let (ww, wh) = (r.right - r.left, r.bottom - r.top);
@@ -327,11 +383,24 @@ pub fn open() {
         let y = (work.top + ((work.bottom - work.top) - wh) / 2).max(work.top);
         let class = class_name();
         let title = wide(crate::config::APP_NAME);
-        let hwnd = CreateWindowExW(0, class.as_ptr(), title.as_ptr(), STYLE, x, y, ww, wh, null_mut(), null_mut(), GetModuleHandleW(null()), null());
+        let hwnd = CreateWindowExW(
+            0,
+            class.as_ptr(),
+            title.as_ptr(),
+            STYLE,
+            x,
+            y,
+            ww,
+            wh,
+            null_mut(),
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        );
         if hwnd.is_null() {
             return;
         }
-        let dpi = GetDpiForWindow(hwnd).max(96).min(scale.max(72));
+        let dpi = GetDpiForWindow(hwnd).max(96).min(scale.max(66));
         let dark = !apps_use_light_theme();
         STATE.with(|s| {
             *s.borrow_mut() = Some(State {
@@ -428,24 +497,59 @@ impl<H> Canvas<'_, H> {
     }
 
     pub(super) fn rect(&self, x: i32, y: i32, w: i32, h: i32) -> RECT {
-        RECT { left: self.px(x), top: self.px(y), right: self.px(x + w), bottom: self.px(y + h) }
+        RECT {
+            left: self.px(x),
+            top: self.px(y),
+            right: self.px(x + w),
+            bottom: self.px(y + h),
+        }
     }
 
     /// Text width in logical pixels. Called before GDI+ takes the DC.
     pub(super) fn measure(&self, font: Font, s: &str) -> i32 {
         let w = wide(s);
-        let mut r = RECT { left: 0, top: 0, right: 10_000, bottom: 1000 };
+        let mut r = RECT {
+            left: 0,
+            top: 0,
+            right: 10_000,
+            bottom: 1000,
+        };
         unsafe {
             let old = SelectObject(self.hdc, self.fonts.get(font));
-            DrawTextW(self.hdc, w.as_ptr(), -1, &mut r, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            DrawTextW(
+                self.hdc,
+                w.as_ptr(),
+                -1,
+                &mut r,
+                DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX,
+            );
             SelectObject(self.hdc, old);
         }
         (r.right as f32 / self.k).ceil() as i32
     }
 
-    pub(super) fn text(&mut self, x: i32, y: i32, w: i32, h: i32, s: &str, font: Font, color: u32, flags: u32) {
+    // The window and panel layout code calls text() and round_rect() about 50 times with flat (x, y, w, h);
+    // a rect struct would churn every call site for no behaviour change.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn text(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        s: &str,
+        font: Font,
+        color: u32,
+        flags: u32,
+    ) {
         let rect = self.rect(x, y, w, h);
-        self.texts.push(Text { rect, s: wide(s), font, color, flags: flags | DT_NOPREFIX });
+        self.texts.push(Text {
+            rect,
+            s: wide(s),
+            font,
+            color,
+            flags: flags | DT_NOPREFIX,
+        });
     }
 
     pub(super) fn hit(&mut self, x: i32, y: i32, w: i32, h: i32, hit: H) {
@@ -454,7 +558,13 @@ impl<H> Canvas<'_, H> {
     }
 
     fn round_path(&self, x: f32, y: f32, w: f32, h: f32, r: f32) -> *mut GpPath {
-        let (x, y, w, h, r) = (x * self.k, y * self.k, w * self.k, h * self.k, (r * self.k).min(h * self.k / 2.0));
+        let (x, y, w, h, r) = (
+            x * self.k,
+            y * self.k,
+            w * self.k,
+            h * self.k,
+            (r * self.k).min(h * self.k / 2.0),
+        );
         let d = r * 2.0;
         let mut path: *mut GpPath = null_mut();
         unsafe {
@@ -486,14 +596,32 @@ impl<H> Canvas<'_, H> {
         }
     }
 
-    pub(super) fn round_rect(&self, x: i32, y: i32, w: i32, h: i32, r: f32, fill: u32, border: Option<(u32, f32)>) {
+    // Same flat (x, y, w, h) shape as text() and hit(), used the same way by the layout code.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn round_rect(
+        &self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        r: f32,
+        fill: u32,
+        border: Option<(u32, f32)>,
+    ) {
         if r <= 0.0 {
             // A zero radius gives empty arcs, which GDI+ fills as nothing.
             let k = self.k;
             unsafe {
                 let mut brush: *mut GpSolidFill = null_mut();
                 GdipCreateSolidFill(argb(fill), &mut brush);
-                GdipFillRectangle(self.g, brush as *mut GpBrush, x as f32 * k, y as f32 * k, w as f32 * k, h as f32 * k);
+                GdipFillRectangle(
+                    self.g,
+                    brush as *mut GpBrush,
+                    x as f32 * k,
+                    y as f32 * k,
+                    w as f32 * k,
+                    h as f32 * k,
+                );
                 GdipDeleteBrush(brush as *mut GpBrush);
             }
             return;
@@ -503,7 +631,13 @@ impl<H> Canvas<'_, H> {
         unsafe { GdipDeletePath(path) };
         if let Some((color, width)) = border {
             let inset = width / 2.0;
-            let path = self.round_path(x as f32 + inset, y as f32 + inset, w as f32 - width, h as f32 - width, r - inset);
+            let path = self.round_path(
+                x as f32 + inset,
+                y as f32 + inset,
+                w as f32 - width,
+                h as f32 - width,
+                r - inset,
+            );
             self.stroke(path, color, width);
             unsafe { GdipDeletePath(path) };
         }
@@ -514,7 +648,14 @@ impl<H> Canvas<'_, H> {
             let mut brush: *mut GpSolidFill = null_mut();
             GdipCreateSolidFill(argb(color), &mut brush);
             let k = self.k;
-            GdipFillEllipse(self.g, brush as *mut GpBrush, (cx - r) * k, (cy - r) * k, 2.0 * r * k, 2.0 * r * k);
+            GdipFillEllipse(
+                self.g,
+                brush as *mut GpBrush,
+                (cx - r) * k,
+                (cy - r) * k,
+                2.0 * r * k,
+                2.0 * r * k,
+            );
             GdipDeleteBrush(brush as *mut GpBrush);
         }
     }
@@ -524,13 +665,22 @@ impl<H> Canvas<'_, H> {
             .map(|i| {
                 let a = std::f32::consts::PI * (i as f32 / 5.0 - 0.5);
                 let rr = if i % 2 == 0 { r } else { r * 0.45 };
-                PointF { X: (cx + rr * a.cos()) * self.k, Y: (cy + rr * a.sin()) * self.k }
+                PointF {
+                    X: (cx + rr * a.cos()) * self.k,
+                    Y: (cy + rr * a.sin()) * self.k,
+                }
             })
             .collect();
         unsafe {
             let mut brush: *mut GpSolidFill = null_mut();
             GdipCreateSolidFill(argb(color), &mut brush);
-            GdipFillPolygon(self.g, brush as *mut GpBrush, pts.as_ptr(), pts.len() as i32, FillModeAlternate);
+            GdipFillPolygon(
+                self.g,
+                brush as *mut GpBrush,
+                pts.as_ptr(),
+                pts.len() as i32,
+                FillModeAlternate,
+            );
             GdipDeleteBrush(brush as *mut GpBrush);
         }
     }
@@ -539,7 +689,14 @@ impl<H> Canvas<'_, H> {
         let s = self.px(size);
         unsafe {
             let mut bmp: *mut GpBitmap = null_mut();
-            GdipCreateBitmapFromScan0(s, s, s * 4, PIXEL_FORMAT_32BPP_ARGB, bgra.as_ptr(), &mut bmp);
+            GdipCreateBitmapFromScan0(
+                s,
+                s,
+                s * 4,
+                PIXEL_FORMAT_32BPP_ARGB,
+                bgra.as_ptr(),
+                &mut bmp,
+            );
             if !bmp.is_null() {
                 GdipDrawImageRectI(self.g, bmp as *mut GpImage, self.px(x), self.px(y), s, s);
                 GdipDisposeImage(bmp as *mut GpImage);
@@ -549,11 +706,23 @@ impl<H> Canvas<'_, H> {
 
     /// Fills the outline through `pts`, given in logical pixels.
     pub(super) fn polygon(&self, pts: &[(f32, f32)], color: u32) {
-        let pts: Vec<PointF> = pts.iter().map(|&(x, y)| PointF { X: x * self.k, Y: y * self.k }).collect();
+        let pts: Vec<PointF> = pts
+            .iter()
+            .map(|&(x, y)| PointF {
+                X: x * self.k,
+                Y: y * self.k,
+            })
+            .collect();
         unsafe {
             let mut brush: *mut GpSolidFill = null_mut();
             GdipCreateSolidFill(argb(color), &mut brush);
-            GdipFillPolygon(self.g, brush as *mut GpBrush, pts.as_ptr(), pts.len() as i32, FillModeAlternate);
+            GdipFillPolygon(
+                self.g,
+                brush as *mut GpBrush,
+                pts.as_ptr(),
+                pts.len() as i32,
+                FillModeAlternate,
+            );
             GdipDeleteBrush(brush as *mut GpBrush);
         }
     }
@@ -602,7 +771,14 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
     let icon = icon_pixels(state, icon_size).to_vec();
     let state_hits;
     {
-        let mut c = Canvas { g: null_mut(), k, hdc, fonts: &state.fonts, texts: Vec::new(), hits: Vec::new() };
+        let mut c = Canvas {
+            g: null_mut(),
+            k,
+            hdc,
+            fonts: &state.fonts,
+            texts: Vec::new(),
+            hits: Vec::new(),
+        };
 
         let site_label = crate::config::site_label();
         let site_w = c.measure(Font::Body, site_label);
@@ -619,7 +795,8 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
                 }
             }
         };
-        let chip_w = [Which::Record, Which::Play, Which::Loop, Which::History].map(|w| (c.measure(Font::Strong, &chip_label(w)) + 28).max(120));
+        let chip_w = [Which::Record, Which::Play, Which::Loop, Which::History]
+            .map(|w| (c.measure(Font::Strong, &chip_label(w)) + 28).max(120));
         let speed_chip = match (v.speed_keys.first(), v.speed_keys.last()) {
             (Some(a), Some(b)) => format!("{a} to {}", b.rsplit(' ').next().unwrap_or(b)),
             _ => String::new(),
@@ -635,10 +812,41 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
 
         // Header
         c.image(PAD, 20, 36, &icon);
-        c.text(PAD + 48, 18, 280, 24, crate::config::APP_NAME, Font::Title, p.text, DT_SINGLELINE | DT_VCENTER);
-        c.text(PAD + 48, 41, 280, 16, &format!("Version {}", v.version), Font::Small, p.sub, DT_SINGLELINE | DT_VCENTER);
-        let site_color = if hover == Some(Hit::Site) { lighten(ACCENT, 0.25) } else { ACCENT };
-        c.text(W - PAD - site_w, 28, site_w, 20, site_label, Font::Body, site_color, DT_SINGLELINE | DT_VCENTER);
+        c.text(
+            PAD + 48,
+            18,
+            280,
+            24,
+            crate::config::APP_NAME,
+            Font::Title,
+            p.text,
+            DT_SINGLELINE | DT_VCENTER,
+        );
+        c.text(
+            PAD + 48,
+            41,
+            280,
+            16,
+            &format!("Version {}", v.version),
+            Font::Small,
+            p.sub,
+            DT_SINGLELINE | DT_VCENTER,
+        );
+        let site_color = if hover == Some(Hit::Site) {
+            lighten(ACCENT, 0.25)
+        } else {
+            ACCENT
+        };
+        c.text(
+            W - PAD - site_w,
+            28,
+            site_w,
+            20,
+            site_label,
+            Font::Body,
+            site_color,
+            DT_SINGLELINE | DT_VCENTER,
+        );
         c.hit(W - PAD - site_w - 4, 26, site_w + 8, 24, Hit::Site);
 
         // Status
@@ -651,25 +859,118 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
             Mode::Playing => ACCENT,
         };
         c.circle((PAD + 21) as f32, (y + 25) as f32, 5.0, dot);
-        c.text(PAD + 34, y + 14, CARD_W - 50, 22, &v.status_title, Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER);
-        c.text(PAD + 16, y + 38, CARD_W - 32, 36, &v.status_detail, Font::Detail, p.sub, DT_WORDBREAK | DT_END_ELLIPSIS);
+        c.text(
+            PAD + 34,
+            y + 14,
+            CARD_W - 50,
+            22,
+            &v.status_title,
+            Font::Strong,
+            p.text,
+            DT_SINGLELINE | DT_VCENTER,
+        );
+        c.text(
+            PAD + 16,
+            y + 38,
+            CARD_W - 32,
+            36,
+            &v.status_detail,
+            Font::Detail,
+            p.sub,
+            DT_WORDBREAK | DT_END_ELLIPSIS,
+        );
         let bw = (CARD_W - 32 - 24) / 3;
         let by = y + 124 - 14 - 32;
-        let (rec_text, rec_color) = if v.mode == Mode::Recording { ("Stop recording", RED) } else { ("Start recording", ACCENT) };
-        button(&mut c, PAD + 16, by, bw, 32, rec_text, Look::Primary(rec_color), hover == Some(Hit::Record), Hit::Record, p);
+        let (rec_text, rec_color) = if v.mode == Mode::Recording {
+            ("Stop recording", RED)
+        } else {
+            ("Start recording", ACCENT)
+        };
+        button(
+            &mut c,
+            PAD + 16,
+            by,
+            bw,
+            32,
+            rec_text,
+            Look::Primary(rec_color),
+            hover == Some(Hit::Record),
+            Hit::Record,
+            p,
+        );
         let can_play = v.mode != Mode::Idle || crate::engine::has_recording();
-        let play_text = if v.mode == Mode::Playing && !v.looping { "Stop playback" } else { "Play once" };
+        let play_text = if v.mode == Mode::Playing && !v.looping {
+            "Stop playback"
+        } else {
+            "Play once"
+        };
         let loop_text = if v.looping { "Stop loop" } else { "Loop" };
-        let play_look = if can_play { Look::Secondary } else { Look::Disabled };
-        button(&mut c, PAD + 16 + bw + 12, by, bw, 32, play_text, play_look, hover == Some(Hit::Play), Hit::Play, p);
-        button(&mut c, PAD + 16 + (bw + 12) * 2, by, bw, 32, loop_text, play_look, hover == Some(Hit::Loop), Hit::Loop, p);
-        speed_row(&mut c, y + 124, v, edit.as_deref(), &speed_label_w, hover, p);
+        let play_look = if can_play {
+            Look::Secondary
+        } else {
+            Look::Disabled
+        };
+        button(
+            &mut c,
+            PAD + 16 + bw + 12,
+            by,
+            bw,
+            32,
+            play_text,
+            play_look,
+            hover == Some(Hit::Play),
+            Hit::Play,
+            p,
+        );
+        button(
+            &mut c,
+            PAD + 16 + (bw + 12) * 2,
+            by,
+            bw,
+            32,
+            loop_text,
+            play_look,
+            hover == Some(Hit::Loop),
+            Hit::Loop,
+            p,
+        );
+        speed_row(
+            &mut c,
+            y + 124,
+            v,
+            edit.as_deref(),
+            &speed_label_w,
+            hover,
+            p,
+        );
 
         // Shortcuts
         let y = 208 + SPEED_ROW;
-        c.text(PAD + 4, y, 200, 16, "Shortcuts", Font::Caption, p.sub, DT_SINGLELINE | DT_VCENTER);
-        let reset_color = if hover == Some(Hit::Reset) { lighten(ACCENT, 0.25) } else { ACCENT };
-        c.text(W - PAD - 4 - reset_w, y, reset_w, 16, "Reset to defaults", Font::Caption, reset_color, DT_SINGLELINE | DT_VCENTER);
+        c.text(
+            PAD + 4,
+            y,
+            200,
+            16,
+            "Shortcuts",
+            Font::Caption,
+            p.sub,
+            DT_SINGLELINE | DT_VCENTER,
+        );
+        let reset_color = if hover == Some(Hit::Reset) {
+            lighten(ACCENT, 0.25)
+        } else {
+            ACCENT
+        };
+        c.text(
+            W - PAD - 4 - reset_w,
+            y,
+            reset_w,
+            16,
+            "Reset to defaults",
+            Font::Caption,
+            reset_color,
+            DT_SINGLELINE | DT_VCENTER,
+        );
         c.hit(W - PAD - 8 - reset_w, y - 4, reset_w + 8, 24, Hit::Reset);
         let y = 228 + SPEED_ROW;
         let row = 46;
@@ -680,11 +981,29 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         divider(&c, y + row * 4, p);
         // The speed shortcuts are fixed, so their chip is read-only.
         let ry = y + row * 4;
-        c.text(PAD + 16, ry, 200, row, "Change speed", Font::Body, p.text, DT_SINGLELINE | DT_VCENTER);
+        c.text(
+            PAD + 16,
+            ry,
+            200,
+            row,
+            "Change speed",
+            Font::Body,
+            p.text,
+            DT_SINGLELINE | DT_VCENTER,
+        );
         let cx = W - PAD - 12 - speed_chip_w;
         let cy = ry + (row - 30) / 2;
         c.round_rect(cx, cy, speed_chip_w, 30, 6.0, p.chip, Some((p.border, 1.0)));
-        c.text(cx, cy, speed_chip_w, 30, &speed_chip, Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        c.text(
+            cx,
+            cy,
+            speed_chip_w,
+            30,
+            &speed_chip,
+            Font::Strong,
+            p.text,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
         let rows = [
             (Which::Record, "Record and stop"),
             (Which::Play, "Play once"),
@@ -693,7 +1012,16 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
         ];
         for (i, (w, label)) in rows.into_iter().enumerate() {
             let ry = y + row * i as i32;
-            c.text(PAD + 16, ry, 200, row, label, Font::Body, p.text, DT_SINGLELINE | DT_VCENTER);
+            c.text(
+                PAD + 16,
+                ry,
+                200,
+                row,
+                label,
+                Font::Body,
+                p.text,
+                DT_SINGLELINE | DT_VCENTER,
+            );
             let cwid = chip_w[i];
             let cx = W - PAD - 12 - cwid;
             let cy = ry + (row - 30) / 2;
@@ -702,17 +1030,37 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
             if capturing {
                 c.round_rect(cx, cy, cwid, 30, 6.0, p.card, Some((ACCENT, 2.0)));
             } else {
-                c.round_rect(cx, cy, cwid, 30, 6.0, if hovered { p.chip_hover } else { p.chip }, Some((p.border, 1.0)));
+                c.round_rect(
+                    cx,
+                    cy,
+                    cwid,
+                    30,
+                    6.0,
+                    if hovered { p.chip_hover } else { p.chip },
+                    Some((p.border, 1.0)),
+                );
             }
             let color = if capturing { ACCENT } else { p.text };
-            c.text(cx, cy, cwid, 30, &chip_label(w), Font::Strong, color, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+            c.text(
+                cx,
+                cy,
+                cwid,
+                30,
+                &chip_label(w),
+                Font::Strong,
+                color,
+                DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+            );
             c.hit(cx, cy, cwid, 30, Hit::Chip(w));
         }
 
         // Notice
         let y = 370 + SPEED_ROW + 92;
         let (text, color) = match (&v.notice, v.capturing) {
-            (_, Some(_)) => ("Press the new shortcut, or Esc to cancel.".to_string(), ACCENT),
+            (_, Some(_)) => (
+                "Press the new shortcut, or Esc to cancel.".to_string(),
+                ACCENT,
+            ),
             (Some(n), None) => (
                 n.text.clone(),
                 match n.kind {
@@ -722,46 +1070,148 @@ fn draw(state: &mut State, hdc: HDC, cw: i32, ch: i32, v: &View) {
             ),
             (None, None) => ("Click a shortcut to change it.".to_string(), p.sub),
         };
-        c.text(PAD + 4, y, CARD_W - 8, 34, &text, Font::Small, color, DT_WORDBREAK | DT_END_ELLIPSIS);
+        c.text(
+            PAD + 4,
+            y,
+            CARD_W - 8,
+            34,
+            &text,
+            Font::Small,
+            color,
+            DT_WORDBREAK | DT_END_ELLIPSIS,
+        );
 
         // General
         let y = 408 + SPEED_ROW + 92;
-        c.text(PAD + 4, y, 200, 16, "General", Font::Caption, p.sub, DT_SINGLELINE | DT_VCENTER);
+        c.text(
+            PAD + 4,
+            y,
+            200,
+            16,
+            "General",
+            Font::Caption,
+            p.sub,
+            DT_SINGLELINE | DT_VCENTER,
+        );
         let y = 428 + SPEED_ROW + 92;
         let row = 50;
-        card(&c, y, row * 4, p);
-        divider(&c, y + row, p);
-        divider(&c, y + row * 2, p);
-        divider(&c, y + row * 3, p);
+        card(&c, y, row * 6, p);
+        for i in 1..6 {
+            divider(&c, y + row * i, p);
+        }
         let rows = [
-            ("Launch at startup", "Runs quietly in the tray after you sign in.".to_string()),
-            ("Update automatically", "Installs new versions when the app starts.".to_string()),
-            ("Random timing", "Each press lands up to half a second early or late.".to_string()),
-            ("Updates", if v.update_text.is_empty() { format!("You have version {}.", v.version) } else { v.update_text.clone() }),
+            (
+                "Launch at startup",
+                "Runs quietly in the tray after you sign in.".to_string(),
+            ),
+            (
+                "Update automatically",
+                "Installs new versions when the app starts.".to_string(),
+            ),
+            (
+                "Random timing",
+                "Each press lands up to half a second early or late.".to_string(),
+            ),
+            (
+                "Stop on mouse or key input",
+                "Off: only the shortcuts stop playback.".to_string(),
+            ),
+            (
+                "Ignore mouse movement",
+                "Records clicks and keys, played at the pointer.".to_string(),
+            ),
+            (
+                "Updates",
+                if v.update_text.is_empty() {
+                    format!("You have version {}.", v.version)
+                } else {
+                    v.update_text.clone()
+                },
+            ),
         ];
         for (i, (title, sub)) in rows.iter().enumerate() {
             let ry = y + row * i as i32;
-            c.text(PAD + 16, ry + 7, 260, 19, title, Font::Body, p.text, DT_SINGLELINE | DT_VCENTER);
-            c.text(PAD + 16, ry + 26, 260, 16, sub, Font::Small, p.sub, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            c.text(
+                PAD + 16,
+                ry + 7,
+                260,
+                19,
+                title,
+                Font::Body,
+                p.text,
+                DT_SINGLELINE | DT_VCENTER,
+            );
+            c.text(
+                PAD + 16,
+                ry + 26,
+                260,
+                16,
+                sub,
+                Font::Small,
+                p.sub,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+            );
         }
         switch(&mut c, y, row, v.autostart, Hit::Autostart, p);
         switch(&mut c, y + row, row, v.auto_update, Hit::AutoUpdate, p);
         switch(&mut c, y + row * 2, row, v.random_timing, Hit::Random, p);
+        switch(
+            &mut c,
+            y + row * 3,
+            row,
+            v.stop_on_input,
+            Hit::StopOnInput,
+            p,
+        );
+        switch(&mut c, y + row * 4, row, v.skip_moves, Hit::SkipMoves, p);
         let bw = 140;
-        button(&mut c, W - PAD - 12 - bw, y + row * 3 + (row - 30) / 2, bw, 30, "Check now", Look::Secondary, hover == Some(Hit::Check), Hit::Check, p);
+        button(
+            &mut c,
+            W - PAD - 12 - bw,
+            y + row * 5 + (row - 30) / 2,
+            bw,
+            30,
+            "Check now",
+            Look::Secondary,
+            hover == Some(Hit::Check),
+            Hit::Check,
+            p,
+        );
 
         // Star
-        let y = 640 + SPEED_ROW + 92;
+        let y = 740 + SPEED_ROW + 92;
         let sh = 52;
         card(&c, y, sh, p);
         let bw = 150;
-        c.text(PAD + 16, y, CARD_W - 32 - bw - 12, sh, "Enjoying it? A star on GitHub helps others find it.", Font::Detail, p.text, DT_WORDBREAK | DT_VCENTER);
+        c.text(
+            PAD + 16,
+            y,
+            CARD_W - 32 - bw - 12,
+            sh,
+            "Enjoying it? A star on GitHub helps others find it.",
+            Font::Detail,
+            p.text,
+            DT_WORDBREAK | DT_VCENTER,
+        );
         let bx = W - PAD - 12 - bw;
         let byy = y + (sh - 30) / 2;
-        let fill = if hover == Some(Hit::Star) { p.button_hover } else { p.button };
+        let fill = if hover == Some(Hit::Star) {
+            p.button_hover
+        } else {
+            p.button
+        };
         c.round_rect(bx, byy, bw, 30, 6.0, fill, Some((p.button_border, 1.0)));
         c.star((bx + 22) as f32, (byy + 15) as f32, 7.5, GOLD);
-        c.text(bx + 34, byy, bw - 42, 30, "Star on GitHub", Font::Strong, p.text, DT_SINGLELINE | DT_VCENTER);
+        c.text(
+            bx + 34,
+            byy,
+            bw - 42,
+            30,
+            "Star on GitHub",
+            Font::Strong,
+            p.text,
+            DT_SINGLELINE | DT_VCENTER,
+        );
         c.hit(bx, byy, bw, 30, Hit::Star);
 
         c.end();
@@ -781,24 +1231,58 @@ fn stops() -> [i32; speed::COUNT] {
 }
 
 /// Six-stop slider with the custom box beside it and a hint or error line.
-fn speed_row(c: &mut Canvas, y: i32, v: &View, edit: Option<&str>, label_w: &[i32; speed::COUNT], hover: Option<Hit>, p: &Palette) {
+fn speed_row(
+    c: &mut Canvas,
+    y: i32,
+    v: &View,
+    edit: Option<&str>,
+    label_w: &[i32; speed::COUNT],
+    hover: Option<Hit>,
+    p: &Palette,
+) {
     divider(c, y, p);
     let st = stops();
     let sel = v.speed_step.min(speed::CUSTOM);
     let ty = y + 22;
-    c.round_rect(st[0], ty - 2, st[speed::CUSTOM] - st[0], 4, 2.0, p.border, None);
+    c.round_rect(
+        st[0],
+        ty - 2,
+        st[speed::CUSTOM] - st[0],
+        4,
+        2.0,
+        p.border,
+        None,
+    );
     c.round_rect(st[0], ty - 2, st[sel] - st[0], 4, 2.0, ACCENT, None);
     let half = (st[1] - st[0]) / 2;
     for (i, &x) in st.iter().enumerate() {
         let on = i <= sel;
-        c.circle(x as f32, ty as f32, if on { 4.0 } else { 3.5 }, if on { ACCENT } else { p.sub });
+        c.circle(
+            x as f32,
+            ty as f32,
+            if on { 4.0 } else { 3.5 },
+            if on { ACCENT } else { p.sub },
+        );
         let lw = label_w[i] + 4;
         let color = if i == sel { p.text } else { p.sub };
         let font = if i == sel { Font::Caption } else { Font::Small };
-        c.text(x - lw / 2 - 4, ty + 10, lw + 8, 16, speed::LABELS[i], font, color, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        c.text(
+            x - lw / 2 - 4,
+            ty + 10,
+            lw + 8,
+            16,
+            speed::LABELS[i],
+            font,
+            color,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+        );
         c.hit(x - half, y + 4, half * 2, 42, Hit::Speed(i));
     }
-    let r = if hover.is_some_and(|h| matches!(h, Hit::Speed(_))) { 9.0 } else { 8.0 };
+    let r = if hover.is_some_and(|h| matches!(h, Hit::Speed(_))) {
+        9.0
+    } else {
+        8.0
+    };
     c.circle(st[sel] as f32, ty as f32, r, ACCENT);
     c.circle(st[sel] as f32, ty as f32, r - 3.0, WHITE);
 
@@ -807,22 +1291,57 @@ fn speed_row(c: &mut Canvas, y: i32, v: &View, edit: Option<&str>, label_w: &[i3
     let (fill, border) = match (edit.is_some(), custom) {
         (true, _) => (p.card, (ACCENT, 2.0)),
         (false, true) => (p.chip, (ACCENT, 1.0)),
-        (false, false) => (if hover == Some(Hit::CustomField) { p.chip_hover } else { p.bg }, (p.border, 1.0)),
+        (false, false) => (
+            if hover == Some(Hit::CustomField) {
+                p.chip_hover
+            } else {
+                p.bg
+            },
+            (p.border, 1.0),
+        ),
     };
     c.round_rect(fx, fy, FIELD_W, 30, 6.0, fill, Some(border));
     let text = match edit {
         Some(t) => format!("{t}|"),
         None => format!("{}x", speed::custom_text(v.custom_speed)),
     };
-    c.text(fx + 8, fy, FIELD_W - 16, 30, &text, Font::Strong, if custom || edit.is_some() { p.text } else { p.sub }, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    c.text(
+        fx + 8,
+        fy,
+        FIELD_W - 16,
+        30,
+        &text,
+        Font::Strong,
+        if custom || edit.is_some() {
+            p.text
+        } else {
+            p.sub
+        },
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
     c.hit(fx, fy, FIELD_W, 30, Hit::CustomField);
 
     let (line, color) = match &v.speed_error {
         Some(e) => (e.clone(), p.error),
         None if edit.is_some() => ("Type 0.1 to 1000, then press Enter.".to_string(), p.sub),
-        None => (format!("Playing at {}. Changes apply at once, also mid-playback.", speed::step_label(sel, v.custom_speed)), p.sub),
+        None => (
+            format!(
+                "Playing at {}. Changes apply at once, also mid-playback.",
+                speed::step_label(sel, v.custom_speed)
+            ),
+            p.sub,
+        ),
     };
-    c.text(PAD + 16, y + 52, CARD_W - 32, 16, &line, Font::Small, color, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    c.text(
+        PAD + 16,
+        y + 52,
+        CARD_W - 32,
+        16,
+        &line,
+        Font::Small,
+        color,
+        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+    );
 }
 
 fn card(c: &Canvas, y: i32, h: i32, p: &Palette) {
@@ -834,14 +1353,42 @@ fn divider(c: &Canvas, y: i32, p: &Palette) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn button(c: &mut Canvas, x: i32, y: i32, w: i32, h: i32, label: &str, look: Look, hovered: bool, hit: Hit, p: &Palette) {
+fn button(
+    c: &mut Canvas,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    label: &str,
+    look: Look,
+    hovered: bool,
+    hit: Hit,
+    p: &Palette,
+) {
     let (fill, border, color) = match look {
-        Look::Primary(base) => (if hovered { lighten(base, 0.12) } else { base }, None, WHITE),
-        Look::Secondary => (if hovered { p.button_hover } else { p.button }, Some((p.button_border, 1.0)), p.text),
+        Look::Primary(base) => (
+            if hovered { lighten(base, 0.12) } else { base },
+            None,
+            WHITE,
+        ),
+        Look::Secondary => (
+            if hovered { p.button_hover } else { p.button },
+            Some((p.button_border, 1.0)),
+            p.text,
+        ),
         Look::Disabled => (p.button, Some((p.border, 1.0)), p.sub),
     };
     c.round_rect(x, y, w, h, 6.0, fill, border);
-    c.text(x, y, w, h, label, Font::Strong, color, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    c.text(
+        x,
+        y,
+        w,
+        h,
+        label,
+        Font::Strong,
+        color,
+        DT_SINGLELINE | DT_VCENTER | DT_CENTER,
+    );
     if look != Look::Disabled {
         c.hit(x, y, w, h, hit);
     }
@@ -866,7 +1413,13 @@ fn switch(c: &mut Canvas, y: i32, row: i32, on: bool, hit: Hit, p: &Palette) {
 fn hit_at(lp: LPARAM) -> Option<Hit> {
     let x = (lp & 0xFFFF) as i16 as i32;
     let y = ((lp >> 16) & 0xFFFF) as i16 as i32;
-    with_state(|s| s.hits.iter().find(|(r, _)| x >= r.left && x < r.right && y >= r.top && y < r.bottom).map(|(_, h)| *h)).flatten()
+    with_state(|s| {
+        s.hits
+            .iter()
+            .find(|(r, _)| x >= r.left && x < r.right && y >= r.top && y < r.bottom)
+            .map(|(_, h)| *h)
+    })
+    .flatten()
 }
 
 fn act(hwnd: HWND, hit: Hit) {
@@ -903,6 +1456,8 @@ fn act(hwnd: HWND, hit: Hit) {
         Hit::Autostart => app::set_autostart(!v.autostart),
         Hit::AutoUpdate => app::set_auto_update(!v.auto_update),
         Hit::Random => app::set_random_timing(!v.random_timing),
+        Hit::StopOnInput => app::set_stop_on_input(!v.stop_on_input),
+        Hit::SkipMoves => app::set_skip_moves(!v.skip_moves),
         Hit::Check => app::check_updates(),
         Hit::Star => app::open_repo(),
         Hit::Site => app::open_site(),
@@ -947,7 +1502,9 @@ fn edit_char(ch: u16) {
             with_state(|s| s.edit.as_mut().map(|t| t.pop()));
         }
         _ => {
-            let Some(c) = char::from_u32(ch as u32) else { return };
+            let Some(c) = char::from_u32(ch as u32) else {
+                return;
+            };
             if c.is_ascii_digit() || matches!(c, '.' | 'x' | 'X' | 'e' | 'E') {
                 with_state(|s| {
                     if let Some(t) = s.edit.as_mut().filter(|t| t.len() < 10) {
@@ -1011,12 +1568,30 @@ fn held(vk: u16) -> bool {
 
 /// Handles a key press while the window waits for a new shortcut.
 fn capture_key(which: Which, vk: u16, lp: LPARAM) {
-    let mods = Mods { ctrl: held(VK_CONTROL), alt: held(VK_MENU), shift: held(VK_SHIFT), sup: held(VK_LWIN) || held(VK_RWIN) };
+    let mods = Mods {
+        ctrl: held(VK_CONTROL),
+        alt: held(VK_MENU),
+        shift: held(VK_SHIFT),
+        sup: held(VK_LWIN) || held(VK_RWIN),
+    };
     if vk == VK_ESCAPE && mods == Mods::default() {
         app::cancel_capture();
         return;
     }
-    if matches!(vk, VK_CONTROL | VK_MENU | VK_SHIFT | VK_LWIN | VK_RWIN | VK_LCONTROL | VK_RCONTROL | VK_LMENU | VK_RMENU | VK_LSHIFT | VK_RSHIFT) {
+    if matches!(
+        vk,
+        VK_CONTROL
+            | VK_MENU
+            | VK_SHIFT
+            | VK_LWIN
+            | VK_RWIN
+            | VK_LCONTROL
+            | VK_RCONTROL
+            | VK_LMENU
+            | VK_RMENU
+            | VK_LSHIFT
+            | VK_RSHIFT
+    ) {
         return;
     }
     if let Some(code) = key_code(vk, (lp >> 24) & 1 == 1) {
@@ -1044,7 +1619,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         WM_MOUSEMOVE => {
             let start = with_state(|s| !std::mem::replace(&mut s.tracking, true)).unwrap_or(false);
             if start {
-                let mut t = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                let mut t = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: hwnd,
+                    dwHoverTime: 0,
+                };
                 TrackMouseEvent(&mut t);
             }
             set_hover(hwnd, hit_at(lp));
@@ -1057,7 +1637,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_SETCURSOR if (lp & 0xFFFF) as u32 == HTCLIENT => {
             let link = with_state(|s| s.hover.is_some_and(Hit::is_link)).unwrap_or(false);
-            SetCursor(LoadCursorW(null_mut(), if link { IDC_HAND } else { IDC_ARROW }));
+            SetCursor(LoadCursorW(
+                null_mut(),
+                if link { IDC_HAND } else { IDC_ARROW },
+            ));
             1
         }
         WM_LBUTTONDOWN => {
@@ -1097,13 +1680,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 None => DefWindowProcW(hwnd, msg, wp, lp),
             }
         }
-        WM_CHAR | WM_SYSCHAR | WM_SYSKEYUP | WM_KEYUP if app::view().is_some_and(|v| v.capturing.is_some()) => 0,
+        WM_CHAR | WM_SYSCHAR | WM_SYSKEYUP | WM_KEYUP
+            if app::view().is_some_and(|v| v.capturing.is_some()) =>
+        {
+            0
+        }
         WM_CHAR if editing() => {
             edit_char(wp as u16);
             0
         }
         WM_ACTIVATE => {
-            if (wp & 0xFFFF) as u32 == WA_INACTIVE && app::view().is_some_and(|v| v.capturing.is_some()) {
+            if (wp & 0xFFFF) as u32 == WA_INACTIVE
+                && app::view().is_some_and(|v| v.capturing.is_some())
+            {
                 app::cancel_capture();
             }
             if (wp & 0xFFFF) as u32 == WA_INACTIVE {
@@ -1113,7 +1702,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_SETTINGCHANGE | WM_THEMECHANGED => {
             let dark = !apps_use_light_theme();
-            let changed = with_state(|s| std::mem::replace(&mut s.dark, dark) != dark).unwrap_or(false);
+            let changed =
+                with_state(|s| std::mem::replace(&mut s.dark, dark) != dark).unwrap_or(false);
             if changed {
                 apply_theme(hwnd, dark);
                 InvalidateRect(hwnd, null(), 0);
@@ -1127,7 +1717,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 s.fonts = Fonts::new(dpi);
             });
             let r = &*(lp as *const RECT);
-            SetWindowPos(hwnd, null_mut(), r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(
+                hwnd,
+                null_mut(),
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
             InvalidateRect(hwnd, null(), 0);
             0
         }

@@ -15,7 +15,10 @@ fn main() {
         res.set("ProductName", "Mouse Keys Record Replay");
         res.set("FileDescription", "Mouse Keys Record Replay");
         res.set("CompanyName", "B4Battle LLC");
-        res.set("LegalCopyright", "Copyright (c) 2026 B4Battle LLC. MIT License.");
+        res.set(
+            "LegalCopyright",
+            "Copyright (c) 2026 B4Battle LLC. MIT License.",
+        );
         res.compile().unwrap();
     }
 }

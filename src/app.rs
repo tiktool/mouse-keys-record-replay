@@ -56,6 +56,11 @@ pub struct View {
     pub autostart: bool,
     pub auto_update: bool,
     pub random_timing: bool,
+    pub stop_on_input: bool,
+    pub skip_moves: bool,
+    /// How playback of the saved recording is stopped, as one sentence.
+    #[cfg_attr(windows, allow(dead_code))]
+    pub stop_hint: String,
     /// Index into speed::LABELS, the custom factor and its box text.
     pub speed_step: usize,
     pub custom_speed: f64,
@@ -75,6 +80,8 @@ struct Items {
     repeat: MenuItem,
     recordings: MenuItem,
     random: CheckMenuItem,
+    stop_on_input: CheckMenuItem,
+    skip_moves: CheckMenuItem,
     autostart: CheckMenuItem,
     settings: MenuItem,
     update: MenuItem,
@@ -127,10 +134,18 @@ impl App {
         let (actions, secs) = engine::summary();
         let mode = engine::mode();
         let looping = engine::looping();
+        let input_stops = engine::input_stops();
+        let stop_hint = if input_stops {
+            "During playback, move the mouse or press any key to take back control.".to_string()
+        } else {
+            format!("During playback, press {play} or {repeat} to stop. Your own mouse and keyboard input does not stop it.")
+        };
         let (title, detail) = match mode {
             Mode::Recording => ("Recording".to_string(), format!("Press {rec} to stop, {play} to play it once or {repeat} to loop it.")),
-            Mode::Playing if looping => ("Looping".to_string(), "Repeats until you move the mouse or press any key.".to_string()),
-            Mode::Playing => ("Playing".to_string(), "Move the mouse or press any key to take back control.".to_string()),
+            Mode::Playing if looping && input_stops => ("Looping".to_string(), "Repeats until you move the mouse or press any key.".to_string()),
+            Mode::Playing if looping => ("Looping".to_string(), format!("Repeats until you press {repeat}.")),
+            Mode::Playing if input_stops => ("Playing".to_string(), "Move the mouse or press any key to take back control.".to_string()),
+            Mode::Playing => ("Playing".to_string(), format!("Press {play} to stop.")),
             Mode::Idle if engine::has_recording() => (
                 "Ready".to_string(),
                 format!(
@@ -152,10 +167,16 @@ impl App {
             autostart: self.settings.autostart,
             auto_update: self.settings.auto_update,
             random_timing: self.settings.random_timing,
+            stop_on_input: self.settings.stop_on_input,
+            skip_moves: self.settings.skip_moves,
+            stop_hint,
             speed_step: self.settings.speed_step.min(speed::CUSTOM),
             custom_speed: self.settings.custom_speed,
             speed_error: self.speed_error.clone(),
-            speed_keys: shortcuts::speed_shortcuts().iter().map(|s| shortcuts::label(s)).collect(),
+            speed_keys: shortcuts::speed_shortcuts()
+                .iter()
+                .map(|s| shortcuts::label(s))
+                .collect(),
             notice: self.notice.clone(),
             update_text: self.update_text.clone(),
             version: VERSION,
@@ -165,9 +186,12 @@ impl App {
 
     fn register(&mut self, which: Which, combo: &str) -> Result<(), String> {
         let hk = shortcuts::hotkey(combo)?;
-        self.manager
-            .register(hk)
-            .map_err(|_| format!("{} is already used by another app. Choose a different shortcut.", shortcuts::label(combo)))?;
+        self.manager.register(hk).map_err(|_| {
+            format!(
+                "{} is already used by another app. Choose a different shortcut.",
+                shortcuts::label(combo)
+            )
+        })?;
         match which {
             Which::Record => self.hk_record = Some(hk),
             Which::Play => self.hk_play = Some(hk),
@@ -226,7 +250,10 @@ impl App {
             }
         }
         if let Some(e) = errors.into_iter().next() {
-            self.notice = Some(Notice { kind: NoticeKind::Error, text: e });
+            self.notice = Some(Notice {
+                kind: NoticeKind::Error,
+                text: e,
+            });
         }
     }
 
@@ -234,12 +261,20 @@ impl App {
     /// record or play shortcut is captured.
     fn register_speed(&mut self) {
         for (i, combo) in shortcuts::speed_shortcuts().iter().enumerate() {
-            let Ok(hk) = shortcuts::hotkey(combo) else { continue };
+            let Ok(hk) = shortcuts::hotkey(combo) else {
+                continue;
+            };
             if self.manager.register(hk).is_ok() {
                 self.hk_speed.push((hk, i));
             } else if self.notice.is_none() {
-                let text = format!("{} is already used by another app, so that speed has no shortcut.", shortcuts::label(combo));
-                self.notice = Some(Notice { kind: NoticeKind::Error, text });
+                let text = format!(
+                    "{} is already used by another app, so that speed has no shortcut.",
+                    shortcuts::label(combo)
+                );
+                self.notice = Some(Notice {
+                    kind: NoticeKind::Error,
+                    text,
+                });
             }
         }
     }
@@ -251,8 +286,16 @@ impl App {
     fn refresh_tray(&mut self) {
         let v = self.view();
         let mode = v.mode;
-        let rec_label = if mode == Mode::Recording { "Stop recording" } else { "Start recording" };
-        let play_label = if mode == Mode::Playing && !v.looping { "Stop playback" } else { "Play once" };
+        let rec_label = if mode == Mode::Recording {
+            "Stop recording"
+        } else {
+            "Start recording"
+        };
+        let play_label = if mode == Mode::Playing && !v.looping {
+            "Stop playback"
+        } else {
+            "Play once"
+        };
         let loop_label = if v.looping { "Stop loop" } else { "Loop" };
         self.items.status.set_text(match mode {
             Mode::Idle => "Ready",
@@ -260,16 +303,28 @@ impl App {
             Mode::Playing if v.looping => "Looping...",
             Mode::Playing => "Playing...",
         });
-        self.items.record.set_text(format!("{rec_label}\t{}", v.record));
-        self.items.play.set_text(format!("{play_label}\t{}", v.play));
-        self.items.repeat.set_text(format!("{loop_label}\t{}", v.repeat));
+        self.items
+            .record
+            .set_text(format!("{rec_label}\t{}", v.record));
+        self.items
+            .play
+            .set_text(format!("{play_label}\t{}", v.play));
+        self.items
+            .repeat
+            .set_text(format!("{loop_label}\t{}", v.repeat));
         let can_play = mode != Mode::Idle || engine::has_recording();
         self.items.play.set_enabled(can_play);
         self.items.repeat.set_enabled(can_play);
         self.items.recordings.set_enabled(mode == Mode::Idle);
         self.items.random.set_checked(self.settings.random_timing);
+        self.items
+            .stop_on_input
+            .set_checked(self.settings.stop_on_input);
+        self.items.skip_moves.set_checked(self.settings.skip_moves);
         self.items.autostart.set_checked(self.settings.autostart);
-        let _ = self.tray.set_tooltip(Some(format!("{APP_NAME}: {}", v.status_title)));
+        let _ = self
+            .tray
+            .set_tooltip(Some(format!("{APP_NAME}: {}", v.status_title)));
         if self.shown_mode != Some(mode) {
             self.shown_mode = Some(mode);
             set_icon(&self.tray, mode);
@@ -303,7 +358,11 @@ fn set_icon(tray: &TrayIcon, mode: Mode) {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let fg = if input::tray_light_background() { [0x1C, 0x1C, 0x1E] } else { [0xFF, 0xFF, 0xFF] };
+        let fg = if input::tray_light_background() {
+            [0x1C, 0x1C, 0x1E]
+        } else {
+            [0xFF, 0xFF, 0xFF]
+        };
         let px = icons::tray(mode, 32, fg, true);
         if let Ok(icon) = Icon::from_rgba(px, 32, 32) {
             let _ = tray.set_icon(Some(icon));
@@ -339,19 +398,47 @@ fn update_hud() {
         a.hud_mode = mode;
         let key = |s: &str| (shortcuts::label(s), true);
         let text = |s: &str| (s.to_string(), false);
-        let card = |kind, title: &str, line| Hud { kind, title: title.to_string(), line };
+        let card = |kind, title: &str, line| Hud {
+            kind,
+            title: title.to_string(),
+            line,
+        };
         match mode {
-            Mode::Recording => {
-                Some(card(HudKind::Recording, "RECORDING", vec![text("Press "), key(&a.settings.record), text(" to stop recording")]))
-            }
+            Mode::Recording => Some(card(
+                HudKind::Recording,
+                "RECORDING",
+                vec![
+                    text("Press "),
+                    key(&a.settings.record),
+                    text(" to stop recording"),
+                ],
+            )),
             Mode::Playing if engine::looping() => {
-                let title = format!("LOOPING AT {}", speed::step_label(a.settings.speed_step, a.settings.custom_speed));
-                Some(card(HudKind::Looping, &title, vec![text("Move your mouse or press any key to stop looping")]))
+                let title = format!(
+                    "LOOPING AT {}",
+                    speed::step_label(a.settings.speed_step, a.settings.custom_speed)
+                );
+                let line = if engine::input_stops() {
+                    vec![text("Move your mouse or press any key to stop looping")]
+                } else {
+                    vec![
+                        text("Press "),
+                        key(&a.settings.repeat),
+                        text(" to stop looping"),
+                    ]
+                };
+                Some(card(HudKind::Looping, &title, line))
             }
             Mode::Idle if a.saved_until.is_some_and(|t| Instant::now() < t) => Some(card(
                 HudKind::Saved,
                 "RECORDING SAVED",
-                vec![text("Press "), key(&a.settings.play), text(" to play once or "), key(&a.settings.repeat), text(" to loop")],
+                vec![
+                    text("Press "),
+                    key(&a.settings.play),
+                    text(" to play once or "),
+                    key(&a.settings.repeat),
+                    text(" to loop"),
+                ],
             )),
             _ => None,
         }
@@ -391,7 +478,11 @@ pub fn set_shortcut(which: Which, mods: Mods, code: &str) -> Result<(), String> 
     let combo = shortcuts::compose(mods, code);
     let result = with(|a| {
         a.capturing = None;
-        let mut others: Vec<String> = ALL.iter().filter(|w| **w != which).map(|w| a.combo(*w).to_string()).collect();
+        let mut others: Vec<String> = ALL
+            .iter()
+            .filter(|w| **w != which)
+            .map(|w| a.combo(*w).to_string())
+            .collect();
         others.extend(shortcuts::speed_shortcuts());
         let others: Vec<&str> = others.iter().map(String::as_str).collect();
         let res = shortcuts::validate(&combo, &others).and_then(|_| a.register(which, &combo));
@@ -405,11 +496,17 @@ pub fn set_shortcut(which: Which, mods: Mods, code: &str) -> Result<(), String> 
                 }
                 config::save_settings(&a.settings);
                 a.register_all();
-                a.notice = Some(Notice { kind: NoticeKind::Success, text: format!("Saved. {} is ready to use.", shortcuts::label(&combo)) });
+                a.notice = Some(Notice {
+                    kind: NoticeKind::Success,
+                    text: format!("Saved. {} is ready to use.", shortcuts::label(&combo)),
+                });
             }
             Err(e) => {
                 a.register_all();
-                a.notice = Some(Notice { kind: NoticeKind::Error, text: e.clone() });
+                a.notice = Some(Notice {
+                    kind: NoticeKind::Error,
+                    text: e.clone(),
+                });
             }
         }
         res
@@ -427,7 +524,10 @@ pub fn reset_shortcuts() {
         a.settings.repeat = shortcuts::DEFAULT_LOOP.into();
         a.settings.history = shortcuts::DEFAULT_HISTORY.into();
         config::save_settings(&a.settings);
-        a.notice = Some(Notice { kind: NoticeKind::Success, text: "Shortcuts are back to the defaults.".into() });
+        a.notice = Some(Notice {
+            kind: NoticeKind::Success,
+            text: "Shortcuts are back to the defaults.".into(),
+        });
         a.register_all();
     });
     after_change();
@@ -437,7 +537,12 @@ pub fn set_autostart(on: bool) {
     with(|a| {
         match autostart::set(on) {
             Ok(()) => a.settings.autostart = on,
-            Err(e) => a.notice = Some(Notice { kind: NoticeKind::Error, text: e }),
+            Err(e) => {
+                a.notice = Some(Notice {
+                    kind: NoticeKind::Error,
+                    text: e,
+                })
+            }
         }
         config::save_settings(&a.settings);
     });
@@ -448,6 +553,26 @@ pub fn set_random_timing(on: bool) {
     engine::set_random(on);
     with(|a| {
         a.settings.random_timing = on;
+        config::save_settings(&a.settings);
+    });
+    after_change();
+}
+
+/// Applies at once, also to a playback in progress.
+pub fn set_stop_on_input(on: bool) {
+    engine::set_stop_on_input(on);
+    with(|a| {
+        a.settings.stop_on_input = on;
+        config::save_settings(&a.settings);
+    });
+    after_change();
+}
+
+/// Applies to the next recording; saved recordings stay as they are.
+pub fn set_skip_moves(on: bool) {
+    engine::set_skip_moves(on);
+    with(|a| {
+        a.settings.skip_moves = on;
         config::save_settings(&a.settings);
     });
     after_change();
@@ -508,7 +633,9 @@ pub fn open_site() {
 
 pub fn open_url(url: &str) {
     #[cfg(windows)]
-    let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
+    let _ = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn();
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("/usr/bin/open").arg(url).spawn();
     #[cfg(target_os = "linux")]
@@ -556,6 +683,8 @@ fn build_menu() -> (Menu, Items) {
         repeat: MenuItem::new("Loop", true, None),
         recordings: MenuItem::new("Recordings...", true, None),
         random: CheckMenuItem::new("Random timing", true, false, None),
+        stop_on_input: CheckMenuItem::new("Stop on mouse or key input", true, true, None),
+        skip_moves: CheckMenuItem::new("Ignore mouse movement", true, false, None),
         settings: MenuItem::new("Settings...", true, None),
         autostart: CheckMenuItem::new("Start at login", true, true, None),
         update: MenuItem::new("Check for updates", true, None),
@@ -572,6 +701,8 @@ fn build_menu() -> (Menu, Items) {
         &items.repeat,
         &items.recordings,
         &items.random,
+        &items.stop_on_input,
+        &items.skip_moves,
         &sep(),
         &items.settings,
         &items.autostart,
@@ -593,6 +724,8 @@ fn on_menu(e: MenuEvent) {
             (i.repeat.id().clone(), 8),
             (i.recordings.id().clone(), 10),
             (i.random.id().clone(), 9),
+            (i.stop_on_input.id().clone(), 11),
+            (i.skip_moves.id().clone(), 12),
             (i.settings.id().clone(), 3),
             (i.autostart.id().clone(), 4),
             (i.update.id().clone(), 5),
@@ -615,6 +748,14 @@ fn on_menu(e: MenuEvent) {
             let on = with(|a| !a.settings.random_timing).unwrap_or(false);
             set_random_timing(on);
         }
+        11 => {
+            let on = with(|a| !a.settings.stop_on_input).unwrap_or(true);
+            set_stop_on_input(on);
+        }
+        12 => {
+            let on = with(|a| !a.settings.skip_moves).unwrap_or(false);
+            set_skip_moves(on);
+        }
         3 => ui::open(),
         4 => {
             let on = with(|a| !a.settings.autostart).unwrap_or(true);
@@ -633,7 +774,13 @@ fn on_hotkey(e: GlobalHotKeyEvent) {
     if e.state() != HotKeyState::Pressed {
         return;
     }
-    let step = with(|a| a.hk_speed.iter().find(|(h, _)| h.id() == e.id()).map(|(_, i)| *i)).flatten();
+    let step = with(|a| {
+        a.hk_speed
+            .iter()
+            .find(|(h, _)| h.id() == e.id())
+            .map(|(_, i)| *i)
+    })
+    .flatten();
     if let Some(step) = step {
         set_speed_step(step);
         // The chord that picked the speed must not count as taking back control.
@@ -645,10 +792,15 @@ fn on_hotkey(e: GlobalHotKeyEvent) {
             return None;
         }
         a.last_hotkey = Instant::now();
-        let which = [(a.hk_record, Which::Record), (a.hk_play, Which::Play), (a.hk_loop, Which::Loop), (a.hk_history, Which::History)]
-            .into_iter()
-            .find(|(h, _)| h.is_some_and(|h| h.id() == e.id()))?
-            .1;
+        let which = [
+            (a.hk_record, Which::Record),
+            (a.hk_play, Which::Play),
+            (a.hk_loop, Which::Loop),
+            (a.hk_history, Which::History),
+        ]
+        .into_iter()
+        .find(|(h, _)| h.is_some_and(|h| h.id() == e.id()))?
+        .1;
         Some((which, shortcuts::chord_len(a.combo(which)), a.tray_hit()))
     })
     .flatten() else {
@@ -770,7 +922,9 @@ fn on_update(o: update::Outcome) {
     let restart = with(|a| {
         a.update_text = match &o {
             update::Outcome::UpToDate => format!("You have the latest version ({VERSION})."),
-            update::Outcome::Installed(v) => format!("Version {v} is installed and starts in a moment."),
+            update::Outcome::Installed(v) => {
+                format!("Version {v} is installed and starts in a moment.")
+            }
             update::Outcome::Failed(e) => e.clone(),
             update::Outcome::Silent => String::new(),
         };
@@ -797,7 +951,10 @@ fn startup() {
     let mut settings = config::load_settings();
     let steps = match history::Store::open() {
         Ok(store) => {
-            if let Some(id) = config::dir().ok().and_then(|d| history::migrate(&store, &d.join("recording.json"))) {
+            if let Some(id) = config::dir()
+                .ok()
+                .and_then(|d| history::migrate(&store, &d.join("recording.json")))
+            {
                 settings.active = id;
                 config::save_settings(&settings);
             }
@@ -812,14 +969,18 @@ fn startup() {
         steps,
         |err| send(UserEvent::Engine(err)),
         |steps| {
-            std::thread::spawn(move || match history::Store::open().and_then(|s| s.add(&steps, history::now_secs())) {
-                Ok(e) => send(UserEvent::Saved(e.id)),
-                Err(err) => eprintln!("recordings: save failed: {err}"),
+            std::thread::spawn(move || {
+                match history::Store::open().and_then(|s| s.add(&steps, history::now_secs())) {
+                    Ok(e) => send(UserEvent::Saved(e.id)),
+                    Err(err) => eprintln!("recordings: save failed: {err}"),
+                }
             });
         },
     );
     let (menu, items) = build_menu();
-    let builder = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip(APP_NAME);
+    let builder = TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_tooltip(APP_NAME);
     #[cfg(windows)]
     let builder = builder.with_menu_on_left_click(false);
     let tray = builder.build().expect("tray icon");
@@ -833,6 +994,8 @@ fn startup() {
         let _ = autostart::set(true);
     }
     engine::set_random(settings.random_timing);
+    engine::set_stop_on_input(settings.stop_on_input);
+    engine::set_skip_moves(settings.skip_moves);
     engine::set_speed(speed::factor(settings.speed_step, settings.custom_speed));
     let auto_update = settings.auto_update;
     let mut app = App {
@@ -861,7 +1024,10 @@ fn startup() {
     // opens at startup (and after an auto-update) instead of failing on first use.
     #[cfg(target_os = "macos")]
     if input::missing_pane().is_some() {
-        app.notice = Some(Notice { kind: NoticeKind::Error, text: engine::permission_text() });
+        app.notice = Some(Notice {
+            kind: NoticeKind::Error,
+            text: engine::permission_text(),
+        });
     }
     let has_error = app.notice.is_some();
     app.refresh_tray();
@@ -904,7 +1070,10 @@ pub fn run() {
                 UserEvent::Engine(err) => {
                     let restart = with(|a| {
                         if let Some(text) = err.clone() {
-                            a.notice = Some(Notice { kind: NoticeKind::Error, text });
+                            a.notice = Some(Notice {
+                                kind: NoticeKind::Error,
+                                text,
+                            });
                         }
                         a.restart_pending && engine::mode() == Mode::Idle
                     })
@@ -919,7 +1088,11 @@ pub fn run() {
                 }
                 UserEvent::HotKey(e) => on_hotkey(e),
                 UserEvent::Menu(e) => on_menu(e),
-                UserEvent::Tray(TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }) => {
+                UserEvent::Tray(TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }) => {
                     if cfg!(windows) {
                         ui::open();
                     }
@@ -943,10 +1116,15 @@ mod instance {
     #[cfg(windows)]
     mod imp {
         use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
-        use windows_sys::Win32::System::Threading::{CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE};
+        use windows_sys::Win32::System::Threading::{
+            CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE, INFINITE,
+        };
 
         fn name() -> Vec<u16> {
-            "Local\\MouseKeysRecordReplay.Show".encode_utf16().chain(Some(0)).collect()
+            "Local\\MouseKeysRecordReplay.Show"
+                .encode_utf16()
+                .chain(Some(0))
+                .collect()
         }
 
         static mut EVENT: usize = 0;
@@ -960,7 +1138,9 @@ mod instance {
                         let other = OpenEventW(EVENT_MODIFY_STATE, 0, n.as_ptr());
                         if !other.is_null() {
                             // Lets the running copy bring its window to the front.
-                            windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY);
+                            windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(
+                                windows_sys::Win32::UI::WindowsAndMessaging::ASFW_ANY,
+                            );
                             SetEvent(other);
                             CloseHandle(other);
                         }
@@ -1015,7 +1195,9 @@ mod instance {
         }
 
         pub fn listen(show: impl Fn() + Send + 'static) {
-            let Some(l) = LISTENER.lock().unwrap().take() else { return };
+            let Some(l) = LISTENER.lock().unwrap().take() else {
+                return;
+            };
             std::thread::spawn(move || {
                 for s in l.incoming() {
                     if s.is_ok() {

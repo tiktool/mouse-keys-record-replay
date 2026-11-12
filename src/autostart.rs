@@ -36,10 +36,18 @@ mod imp {
                 )
             } else {
                 let r = RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), value.as_ptr());
-                if r == 2 { 0 } else { r }
+                if r == 2 {
+                    0
+                } else {
+                    r
+                }
             }
         };
-        if rc == 0 { Ok(()) } else { Err("Windows did not allow changing the startup setting.".into()) }
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err("Windows did not allow changing the startup setting.".into())
+        }
     }
 }
 
@@ -50,11 +58,14 @@ mod imp {
     const LABEL: &str = "tools.tik.mousekeysrecordreplay";
 
     fn plist() -> Option<PathBuf> {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(format!("Library/LaunchAgents/{LABEL}.plist")))
+        std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join(format!("Library/LaunchAgents/{LABEL}.plist")))
     }
 
     fn xml_escape(s: &str) -> String {
-        s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
     }
 
     pub fn set(on: bool) -> Result<(), String> {
@@ -103,7 +114,11 @@ mod imp {
             return Ok(());
         }
         let exe = super::exe().ok_or("Could not find the app location.")?;
-        let quoted = exe.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+        let quoted = exe
+            .display()
+            .to_string()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
         let body = format!(
             "[Desktop Entry]\nType=Application\nName=Mouse Keys Record Replay\nExec=\"{quoted}\"\nIcon=mouse-keys-record-replay\nX-GNOME-Autostart-enabled=true\nNoDisplay=false\n"
         );
